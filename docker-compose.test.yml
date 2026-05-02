@@ -1,0 +1,100 @@
+# docker-compose.test.yml
+# Lightweight service stack for integration tests and CI pipelines.
+# Intentionally minimal — only services needed for tests, not the full dev stack.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d
+#   APP_ENV=development LLMOPS_LOCALSTACK_URL=http://localhost:4566 pytest -m integration
+#   docker compose -f docker-compose.test.yml down -v
+#
+# This file does NOT replace docker-compose.yml (the full development stack).
+# Port mapping matches the defaults expected by tests/conftest.py fixtures.
+
+services:
+
+  # ── Qdrant (vector store for OSS integration tests) ──────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    ports:
+      - "6333:6333"
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+    tmpfs:
+      - /qdrant/storage   # in-memory for tests — data is ephemeral
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6333/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ── Redis (semantic cache + rate limiter) ─────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── LocalStack (mocks AWS S3, SecretsManager, Bedrock stubs) ─────────────────
+  localstack:
+    image: localstack/localstack:3.4
+    ports:
+      - "4566:4566"    # unified endpoint
+    environment:
+      SERVICES: s3,secretsmanager,sts
+      DEFAULT_REGION: us-east-1
+      EAGER_SERVICE_LOADING: 1
+      # Disable persistence — tests always start with a clean state
+      PERSISTENCE: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+
+  # ── LocalStack bootstrap (creates test buckets + secrets after startup) ───────
+  localstack-init:
+    image: amazon/aws-cli:2.15.57
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: /bin/sh -c
+    command: >
+      "
+      aws --endpoint-url=http://localstack:4566 s3 mb s3://llmops-test-data --region us-east-1 &&
+      aws --endpoint-url=http://localstack:4566 s3 mb s3://llmops-test-artifacts --region us-east-1 &&
+      aws --endpoint-url=http://localstack:4566 secretsmanager create-secret
+        --name llmops/test/api-key --secret-string 'test-secret-value' --region us-east-1 &&
+      echo 'LocalStack bootstrap complete'
+      "
+    restart: "no"
+
+  # ── WireMock (stubs for Azure OpenAI, Bedrock, Vertex AI HTTP calls) ──────────
+  wiremock:
+    image: wiremock/wiremock:3.5.4
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./tests/wiremock/mappings:/home/wiremock/mappings:ro
+      - ./tests/wiremock/__files:/home/wiremock/__files:ro
+    command: --verbose --global-response-templating
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/__admin/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+# No named volumes — all storage is ephemeral for test isolation

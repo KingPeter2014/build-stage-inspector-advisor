@@ -1,0 +1,272 @@
+name: Deploy — GCP Vertex AI
+
+# Deploys to development or staging ONLY.
+# Production is handled exclusively by promote_to_production.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'providers/gcp/**'
+      - 'serving/**'
+      - 'core/**'
+      - 'governance/**'
+      - 'infra/terraform/envs/gcp/**'
+      - 'Dockerfile'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (production is blocked — use promote_to_production.yml)'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [development, staging]
+      terraform_action:
+        description: 'Terraform action'
+        required: true
+        default: 'apply'
+        type: choice
+        options: [plan, apply]
+
+env:
+  TF_DIR: infra/terraform/envs/gcp
+  TF_VERSION: '1.8.0'
+  GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+
+jobs:
+  # ── Stage 1: Terraform plan/apply ─────────────────────────────────────────
+  infra:
+    name: Provision GCP infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    outputs:
+      artifact_registry_url: ${{ steps.tf_outputs.outputs.artifact_registry_url }}
+      gateway_url: ${{ steps.tf_outputs.outputs.gateway_url }}
+      gcs_bucket_name: ${{ steps.tf_outputs.outputs.gcs_bucket_name }}
+
+    permissions:
+      id-token: write   # required for Workload Identity Federation
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=llmops/${{ github.event.inputs.environment || 'staging' }}"
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform plan \
+            -var="gcp_project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="env=${{ github.event.inputs.environment || 'staging' }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -var="gateway_image=placeholder" \
+            -out=tfplan.binary
+
+      - name: Terraform apply
+        if: ${{ github.event.inputs.terraform_action != 'plan' && github.ref == 'refs/heads/main' }}
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve tfplan.binary
+
+      - name: Capture Terraform outputs
+        id: tf_outputs
+        if: ${{ github.event.inputs.terraform_action != 'plan' }}
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "artifact_registry_url=$(terraform output -raw artifact_registry_url)" >> "$GITHUB_OUTPUT"
+          echo "gateway_url=$(terraform output -raw gateway_url)" >> "$GITHUB_OUTPUT"
+          echo "gcs_bucket_name=$(terraform output -raw gcs_bucket_name)" >> "$GITHUB_OUTPUT"
+
+  # ── Stage 2: Build and push to Artifact Registry ──────────────────────────
+  build:
+    name: Build and push container image
+    runs-on: ubuntu-latest
+    needs: infra
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      full_image: ${{ needs.infra.outputs.artifact_registry_url }}/gateway:${{ steps.meta.outputs.version }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.infra.outputs.artifact_registry_url }}/gateway
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PROVIDER=gcp
+          cache-from: type=registry,ref=${{ needs.infra.outputs.artifact_registry_url }}/gateway:buildcache
+          cache-to: type=registry,ref=${{ needs.infra.outputs.artifact_registry_url }}/gateway:buildcache,mode=max
+
+      - name: Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build.outputs.full_image }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+  # ── Stage 3: Eval gate ────────────────────────────────────────────────────
+  eval-gate:
+    name: Regression eval gate
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt -r providers/gcp/requirements.txt
+
+      - name: Run regression eval
+        run: python scripts/run_evals.py --suite regression --provider gcp --min-pass-rate 0.90
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ env.GCP_REGION }}
+          VERTEX_MODEL_ID: ${{ secrets.VERTEX_MODEL_ID || 'gemini-1.5-pro-002' }}
+
+      - name: Run safety eval
+        run: python scripts/run_evals.py --suite safety --provider gcp --min-pass-rate 0.95
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          PERSPECTIVE_API_KEY: ${{ secrets.PERSPECTIVE_API_KEY }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gcp-eval-reports
+          path: reports/
+
+  # ── Stage 4: Deploy to Cloud Run (staging / development only) ────────────
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    needs: [infra, build, eval-gate]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event.inputs.environment || 'staging') != 'production'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (WIF — staging/dev service account)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Deploy new revision to Cloud Run (no traffic)
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: llmops-${{ github.event.inputs.environment || 'staging' }}-gateway
+          region: ${{ env.GCP_REGION }}
+          image: ${{ needs.build.outputs.full_image }}
+          flags: '--no-traffic'
+
+      - name: Shift traffic to new revision (canary 10%)
+        run: |
+          NEW_REV=$(gcloud run revisions list \
+            --service=llmops-${{ github.event.inputs.environment || 'staging' }}-gateway \
+            --region=${{ env.GCP_REGION }} \
+            --sort-by="~metadata.creationTimestamp" \
+            --format="value(metadata.name)" \
+            --limit=1)
+          gcloud run services update-traffic \
+            llmops-${{ github.event.inputs.environment || 'staging' }}-gateway \
+            --region=${{ env.GCP_REGION }} \
+            --to-revisions="${NEW_REV}=10"
+          echo "Canary revision: $NEW_REV (10% traffic)"
+
+      - name: Post-deploy smoke tests (against canary 10%)
+        run: pip install httpx pytest && pytest tests/smoke/ -m smoke -v --tb=short
+        env:
+          APP_ENV: ${{ github.event.inputs.environment || 'staging' }}
+          GATEWAY_URL: ${{ needs.infra.outputs.gateway_url }}
+          X_USER_ID: ci-smoke-user
+          X_USER_ROLE: developer
+
+      - name: Promote canary to 100% traffic
+        run: |
+          NEW_REV=$(gcloud run revisions list \
+            --service=llmops-${{ github.event.inputs.environment || 'staging' }}-gateway \
+            --region=${{ env.GCP_REGION }} \
+            --sort-by="~metadata.creationTimestamp" \
+            --format="value(metadata.name)" \
+            --limit=1)
+          gcloud run services update-traffic \
+            llmops-${{ github.event.inputs.environment || 'staging' }}-gateway \
+            --region=${{ env.GCP_REGION }} \
+            --to-revisions="${NEW_REV}=100"
+          echo "Full traffic on revision: $NEW_REV"
+
+      - name: Re-apply Terraform with final image tag
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform apply -auto-approve \
+            -var="gcp_project_id=${{ secrets.GCP_PROJECT_ID }}" \
+            -var="env=${{ github.event.inputs.environment || 'staging' }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -var="gateway_image=${{ needs.build.outputs.full_image }}"

@@ -1,0 +1,96 @@
+name: RAG Pipeline CI/CD
+
+on:
+  push:
+    paths:
+      - 'data_ingestion/**'
+      - 'storage/vector_store/**'
+      - 'serving/rag/**'
+      - 'data/eval_datasets/rag_golden*.jsonl'
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  QDRANT_URL: ${{ secrets.QDRANT_URL }}
+  QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+
+jobs:
+  # ── Stage 1: Validate chunking & embedding config ───────────────────────────
+  validate-config:
+    name: Validate RAG configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate chunking config
+        run: python scripts/validate_rag_config.py
+
+  # ── Stage 2: Retrieval quality eval ─────────────────────────────────────────
+  retrieval-eval:
+    name: Retrieval quality evaluation
+    needs: validate-config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run retrieval eval (Recall@5, Precision)
+        run: |
+          python scripts/run_evals.py \
+            --suite rag_retrieval \
+            --min-recall-at-5 0.80 \
+            --min-precision 0.75
+      - name: Upload retrieval report
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-eval-report
+          path: reports/retrieval_eval_report.json
+
+  # ── Stage 3: End-to-end RAG eval (Ragas) ────────────────────────────────────
+  rag-e2e-eval:
+    name: End-to-end RAG evaluation
+    needs: retrieval-eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run Ragas end-to-end eval
+        run: |
+          python scripts/run_evals.py \
+            --suite rag_e2e \
+            --min-faithfulness 0.80 \
+            --min-answer-relevancy 0.75 \
+            --min-context-recall 0.70
+      - name: Upload Ragas report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ragas-report
+          path: reports/ragas_report.json
+
+  # ── Stage 4: Re-index vector store on merge ─────────────────────────────────
+  reindex:
+    name: Re-index vector store (staging)
+    needs: rag-e2e-eval
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run ingestion pipeline against staging vector store
+        run: python scripts/run_ingestion.py --env staging
+      - name: Smoke test new index
+        run: python scripts/smoke_test_rag.py --env staging

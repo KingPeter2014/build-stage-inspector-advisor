@@ -1,0 +1,253 @@
+name: Deploy — AWS AgentCore
+
+# Deploys to development or staging ONLY.
+# Production is handled exclusively by promote_to_production.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'providers/aws/**'
+      - 'serving/**'
+      - 'core/**'
+      - 'governance/**'
+      - 'infra/terraform/envs/aws/**'
+      - 'Dockerfile'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (production is blocked — use promote_to_production.yml)'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [development, staging]
+      terraform_action:
+        description: 'Terraform action'
+        required: true
+        default: 'apply'
+        type: choice
+        options: [plan, apply]
+
+env:
+  TF_DIR: infra/terraform/envs/aws
+  TF_VERSION: '1.8.0'
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  # ── Stage 1: Terraform plan/apply ─────────────────────────────────────────
+  infra:
+    name: Provision AWS infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    outputs:
+      ecr_repository_url: ${{ steps.tf_outputs.outputs.ecr_repository_url }}
+      alb_dns_name: ${{ steps.tf_outputs.outputs.alb_dns_name }}
+      ecs_cluster_name: ${{ steps.tf_outputs.outputs.ecs_cluster_name }}
+      ecs_service_name: ${{ steps.tf_outputs.outputs.ecs_service_name }}
+
+    permissions:
+      id-token: write   # required for OIDC auth with AWS
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=llmops/${{ github.event.inputs.environment || 'staging' }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=terraform-locks"
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform plan \
+            -var="env=${{ github.event.inputs.environment || 'staging' }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="gateway_image=placeholder" \
+            -out=tfplan.binary
+
+      - name: Terraform apply
+        if: ${{ github.event.inputs.terraform_action != 'plan' && github.ref == 'refs/heads/main' }}
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve tfplan.binary
+
+      - name: Capture Terraform outputs
+        id: tf_outputs
+        if: ${{ github.event.inputs.terraform_action != 'plan' }}
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> "$GITHUB_OUTPUT"
+          echo "alb_dns_name=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT"
+          echo "ecs_cluster_name=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "ecs_service_name=$(terraform output -raw ecs_service_name)" >> "$GITHUB_OUTPUT"
+
+  # ── Stage 2: Build and push to ECR ────────────────────────────────────────
+  build:
+    name: Build and push container image
+    runs-on: ubuntu-latest
+    needs: infra
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      full_image: ${{ needs.infra.outputs.ecr_repository_url }}:${{ steps.meta.outputs.version }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.infra.outputs.ecr_repository_url }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PROVIDER=aws
+          cache-from: type=registry,ref=${{ needs.infra.outputs.ecr_repository_url }}:buildcache
+          cache-to: type=registry,ref=${{ needs.infra.outputs.ecr_repository_url }}:buildcache,mode=max
+
+      - name: Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build.outputs.full_image }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+  # ── Stage 3: Eval gate ────────────────────────────────────────────────────
+  eval-gate:
+    name: Regression eval gate
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt -r providers/aws/requirements.txt
+
+      - name: Run regression eval
+        run: python scripts/run_evals.py --suite regression --provider aws --min-pass-rate 0.90
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+
+      - name: Run safety eval
+        run: python scripts/run_evals.py --suite safety --provider aws --min-pass-rate 0.95
+        env:
+          BEDROCK_GUARDRAIL_ID: ${{ secrets.BEDROCK_GUARDRAIL_ID }}
+          BEDROCK_GUARDRAIL_VERSION: ${{ secrets.BEDROCK_GUARDRAIL_VERSION || '1' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aws-eval-reports
+          path: reports/
+
+  # ── Stage 4: Deploy new task definition to ECS (staging / development only) ──
+  deploy:
+    name: Deploy to ECS Fargate
+    runs-on: ubuntu-latest
+    needs: [infra, build, eval-gate]
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event.inputs.environment || 'staging') != 'production'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — staging/dev role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render ECS task definition with new image
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition-family: llmops-${{ github.event.inputs.environment || 'staging' }}-gateway
+          container-name: gateway
+          image: ${{ needs.build.outputs.full_image }}
+
+      - name: Deploy to ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ needs.infra.outputs.ecs_service_name }}
+          cluster: ${{ needs.infra.outputs.ecs_cluster_name }}
+          wait-for-service-stability: true
+
+      - name: Re-apply Terraform with final image tag
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform apply -auto-approve \
+            -var="env=${{ github.event.inputs.environment || 'staging' }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="gateway_image=${{ needs.build.outputs.full_image }}"
+
+      - name: Post-deploy smoke tests
+        run: pip install httpx pytest && pytest tests/smoke/ -m smoke -v --tb=short
+        env:
+          APP_ENV: ${{ github.event.inputs.environment || 'staging' }}
+          GATEWAY_URL: http://${{ needs.infra.outputs.alb_dns_name }}
+          X_USER_ID: ci-smoke-user
+          X_USER_ROLE: developer

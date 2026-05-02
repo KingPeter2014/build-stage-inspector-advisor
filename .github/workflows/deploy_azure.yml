@@ -1,0 +1,251 @@
+name: Deploy — Azure AI Foundry
+
+# Deploys to development or staging ONLY.
+# Production is handled exclusively by promote_to_production.yml.
+# Pushing to main auto-deploys to staging. Development deploys are manual only.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'providers/azure/**'
+      - 'serving/**'
+      - 'core/**'
+      - 'governance/**'
+      - 'infra/terraform/envs/azure/**'
+      - 'Dockerfile'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (production is blocked — use promote_to_production.yml)'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [development, staging]   # production intentionally excluded
+      terraform_action:
+        description: 'Terraform action'
+        required: true
+        default: 'apply'
+        type: choice
+        options: [plan, apply]
+
+env:
+  TF_DIR: infra/terraform/envs/azure
+  TF_VERSION: '1.8.0'
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  # Workload Identity Federation — no client secret needed
+  ARM_USE_OIDC: 'true'
+
+jobs:
+  # ── Stage 1: Terraform plan/apply ─────────────────────────────────────────
+  infra:
+    name: Provision Azure infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    outputs:
+      acr_login_server: ${{ steps.tf_outputs.outputs.acr_login_server }}
+      gateway_url: ${{ steps.tf_outputs.outputs.gateway_url }}
+      resource_group: ${{ steps.tf_outputs.outputs.resource_group_name }}
+
+    permissions:
+      id-token: write   # required for OIDC auth
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=llmops-${{ github.event.inputs.environment || 'staging' }}.tfstate"
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform plan \
+            -var="env=${{ github.event.inputs.environment || 'staging' }}" \
+            -var="gateway_image=placeholder" \
+            -out=tfplan.binary
+        env:
+          TF_VAR_project: llmops
+          TF_VAR_location: ${{ secrets.AZURE_LOCATION || 'eastus2' }}
+
+      - name: Terraform apply
+        if: ${{ github.event.inputs.terraform_action != 'plan' && github.ref == 'refs/heads/main' }}
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve tfplan.binary
+
+      - name: Capture Terraform outputs
+        id: tf_outputs
+        if: ${{ github.event.inputs.terraform_action != 'plan' }}
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          echo "acr_login_server=$(terraform output -raw acr_login_server)" >> "$GITHUB_OUTPUT"
+          echo "gateway_url=$(terraform output -raw gateway_url)" >> "$GITHUB_OUTPUT"
+          echo "resource_group_name=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
+
+  # ── Stage 2: Build and push to ACR ────────────────────────────────────────
+  build:
+    name: Build and push container image
+    runs-on: ubuntu-latest
+    needs: infra
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      full_image: ${{ needs.infra.outputs.acr_login_server }}/llmops-gateway:${{ steps.meta.outputs.version }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.infra.outputs.acr_login_server }}/llmops-gateway
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: ACR login
+        run: az acr login --name ${{ needs.infra.outputs.acr_login_server }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PROVIDER=azure
+          cache-from: type=registry,ref=${{ needs.infra.outputs.acr_login_server }}/llmops-gateway:buildcache
+          cache-to: type=registry,ref=${{ needs.infra.outputs.acr_login_server }}/llmops-gateway:buildcache,mode=max
+
+      - name: Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.infra.outputs.acr_login_server }}/llmops-gateway:${{ steps.meta.outputs.version }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+  # ── Stage 3: Eval gate ────────────────────────────────────────────────────
+  eval-gate:
+    name: Regression eval gate
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt -r providers/azure/requirements.txt
+      - name: Run regression eval
+        run: python scripts/run_evals.py --suite regression --provider azure --min-pass-rate 0.90
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+      - name: Run safety eval
+        run: python scripts/run_evals.py --suite safety --provider azure --min-pass-rate 0.95
+        env:
+          AZURE_CONTENT_SAFETY_ENDPOINT: ${{ secrets.AZURE_CONTENT_SAFETY_ENDPOINT }}
+          AZURE_CONTENT_SAFETY_KEY: ${{ secrets.AZURE_CONTENT_SAFETY_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: azure-eval-reports
+          path: reports/
+
+  # ── Stage 4: Update Container App image (staging / development only) ─────────
+  deploy:
+    name: Deploy to Azure Container Apps
+    runs-on: ubuntu-latest
+    needs: [infra, build, eval-gate]
+    # Secrets are scoped to this GitHub Environment — staging and development
+    # hold different AZURE_CLIENT_ID values from the production Environment.
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    # Hard guard: this workflow never deploys to production.
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event.inputs.environment || 'staging') != 'production'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC — staging/dev identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App revision
+        run: |
+          az containerapp update \
+            --name llmops-${{ github.event.inputs.environment || 'staging' }}-gateway \
+            --resource-group ${{ needs.infra.outputs.resource_group }} \
+            --image ${{ needs.build.outputs.full_image }}
+
+      - name: Wait for stable revision
+        run: |
+          az containerapp revision list \
+            --name llmops-${{ github.event.inputs.environment || 'staging' }}-gateway \
+            --resource-group ${{ needs.infra.outputs.resource_group }} \
+            --query "[?properties.active && properties.trafficWeight==\`100\`]" \
+            --output table
+
+      - name: Re-apply Terraform with final image tag
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform apply -auto-approve \
+            -var="env=${{ github.event.inputs.environment || 'staging' }}" \
+            -var="gateway_image=${{ needs.build.outputs.full_image }}"
+        env:
+          TF_VAR_project: llmops
+          TF_VAR_location: ${{ secrets.AZURE_LOCATION || 'eastus2' }}
+
+      - name: Post-deploy smoke tests
+        run: pip install httpx pytest && pytest tests/smoke/ -m smoke -v --tb=short
+        env:
+          APP_ENV: ${{ github.event.inputs.environment || 'staging' }}
+          GATEWAY_URL: ${{ needs.infra.outputs.gateway_url }}
+          X_USER_ID: ci-smoke-user
+          X_USER_ROLE: developer

@@ -1,0 +1,144 @@
+name: Model CI/CD
+
+on:
+  push:
+    paths:
+      - 'model_development/fine_tuning/**'
+      - 'serving/**'
+      - 'Dockerfile'
+      - 'helm/**'
+  workflow_dispatch:
+    inputs:
+      model_version:
+        description: 'Model version to promote (from registry)'
+        required: true
+      canary_weight:
+        description: 'Canary traffic weight (0-100)'
+        default: '10'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/llmops-serving
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+jobs:
+  # ── Stage 1: Build & security scan ──────────────────────────────────────────
+  build:
+    name: Build container image
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+      - name: Run Trivy security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+  # ── Stage 2: Model evaluation gate ──────────────────────────────────────────
+  model-eval:
+    name: Evaluate challenger model
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Benchmark challenger vs champion
+        run: |
+          python scripts/benchmark_model.py \
+            --challenger ${{ github.event.inputs.model_version || 'latest' }} \
+            --champion production \
+            --max-regression 0.02
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: reports/benchmark_report.json
+
+  # ── Stage 3: Integration tests against staging ──────────────────────────────
+  integration-test:
+    name: Integration tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short
+      - name: Latency SLO check
+        run: python scripts/check_latency_slo.py --p95-threshold 3.0
+
+  # ── Stage 4: Canary rollout to Kubernetes ───────────────────────────────────
+  canary-deploy:
+    name: Canary deployment
+    needs: [model-eval, integration-test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+      - name: Deploy canary (10% traffic)
+        run: |
+          helm upgrade --install llmops-canary helm/llmops \
+            --set image.tag=${{ needs.build.outputs.image-tag }} \
+            --set canary.enabled=true \
+            --set canary.weight=${{ github.event.inputs.canary_weight || 10 }} \
+            --namespace llmops
+      - name: Monitor canary for 10 minutes
+        run: python scripts/monitor_canary.py --duration 600 --error-rate-threshold 0.01
+
+  # ── Stage 5: Full promotion ──────────────────────────────────────────────────
+  promote:
+    name: Promote to production
+    needs: canary-deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIG }}
+      - name: Full rollout
+        run: |
+          helm upgrade --install llmops helm/llmops \
+            --set image.tag=${{ needs.build.outputs.image-tag }} \
+            --set canary.enabled=false \
+            --namespace llmops
+      - name: Register model version in MLflow
+        run: python scripts/register_model.py --stage Production

@@ -1,0 +1,26 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# Never commit terraform.tfvars to source control.
+
+project  = "llmops"
+env      = "staging"
+location = "eastus2"
+
+# Set after the first `terraform apply` creates the ACR, then re-apply.
+# Format: <acr_login_server>/llmops-gateway:<git-sha>
+gateway_image = "REPLACE_WITH_ACR_LOGIN_SERVER/llmops-gateway:latest"
+
+gpt4o_capacity_tpm     = 30   # 30k TPM
+embedding_capacity_tpm = 120  # 120k TPM
+
+search_sku     = "standard"
+redis_capacity = 1  # 1 GB
+
+gateway_min_replicas = 1
+gateway_max_replicas = 10
+
+tags = {
+  project     = "llmops"
+  environment = "staging"
+  owner       = "ml-platform"
+  cost_center = "ai-infra"
+}

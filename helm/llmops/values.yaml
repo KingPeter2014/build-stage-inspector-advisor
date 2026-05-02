@@ -1,0 +1,84 @@
+# helm/llmops/values.yaml
+# Kubernetes deployment values for the LLMOps serving stack.
+# Designed for Argo Rollouts canary deployments.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/your-org/llmops-serving
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 4000
+  metricsPort: 8000
+
+# Canary rollout config (Argo Rollouts)
+canary:
+  enabled: false
+  weight: 10        # Percentage of traffic to the canary
+  steps:
+    - setWeight: 10
+    - pause: {duration: 5m}
+    - setWeight: 25
+    - pause: {duration: 5m}
+    - setWeight: 50
+    - pause: {duration: 5m}
+    - setWeight: 100
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# GPU node support (for self-hosted vLLM)
+gpu:
+  enabled: false
+  type: nvidia.com/gpu
+  count: 1
+
+env:
+  APP_ENV: production
+  LOG_LEVEL: INFO
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+  OTEL_SERVICE_NAME: llmops-gateway
+
+envFromSecrets:
+  - secretName: llmops-api-keys
+    keys:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - LANGFUSE_PUBLIC_KEY
+      - LANGFUSE_SECRET_KEY
+      - LITELLM_MASTER_KEY
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 4000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 4000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  path: /metrics
+  port: 8000
