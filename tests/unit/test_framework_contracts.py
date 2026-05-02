@@ -35,52 +35,6 @@ def test_require_env_vars_reports_missing(monkeypatch):
         require_env_vars(["REQUIRED_FOR_TEST"], component="unit-test")
 
 
-def test_azure_settings_accept_terraform_env_aliases(monkeypatch):
-    from providers.azure.config.settings import get_azure_settings, reset_azure_settings
-
-    reset_azure_settings()
-    monkeypatch.setenv("AZURE_AI_SEARCH_ENDPOINT", "https://search.example.net")
-    monkeypatch.setenv("AZURE_AI_SEARCH_API_KEY", "search-key")
-    monkeypatch.setenv("REDIS_URL", "rediss://redis.example.net:6380")
-
-    settings = get_azure_settings()
-    assert settings.azure_search_endpoint == "https://search.example.net"
-    assert settings.azure_search_api_key == "search-key"
-    assert settings.azure_redis_url == "rediss://redis.example.net:6380"
-    reset_azure_settings()
-
-
-def test_aws_settings_accept_runtime_env_aliases(monkeypatch):
-    from providers.aws.config.settings import get_aws_settings, reset_aws_settings
-
-    reset_aws_settings()
-    monkeypatch.setenv("S3_BUCKET_NAME", "terraform-bucket")
-    monkeypatch.setenv("REDIS_URL", "redis://redis.example.net:6379")
-
-    settings = get_aws_settings()
-    assert settings.s3_bucket == "terraform-bucket"
-    assert settings.aws_redis_url == "redis://redis.example.net:6379"
-    reset_aws_settings()
-
-
-def test_gcp_settings_accept_runtime_env_aliases(monkeypatch):
-    from providers.gcp.config.settings import get_gcp_settings, reset_gcp_settings
-
-    reset_gcp_settings()
-    monkeypatch.setenv("VECTOR_SEARCH_INDEX_ENDPOINT", "projects/p/locations/r/indexEndpoints/1")
-    monkeypatch.setenv("VECTOR_SEARCH_DEPLOYED_INDEX_ID", "llmops_idx")
-    monkeypatch.setenv("GCS_BUCKET_NAME", "terraform-gcs-bucket")
-    monkeypatch.setenv("REDIS_HOST", "10.0.0.3")
-    monkeypatch.setenv("REDIS_PORT", "6379")
-
-    settings = get_gcp_settings()
-    assert settings.vertex_index_endpoint_id == "projects/p/locations/r/indexEndpoints/1"
-    assert settings.vertex_deployed_index_id == "llmops_idx"
-    assert settings.gcs_bucket == "terraform-gcs-bucket"
-    assert settings.gcp_redis_url == "redis://10.0.0.3:6379"
-    reset_gcp_settings()
-
-
 def test_rag_options_require_graph_when_graph_mode_selected():
     options = RAGOptions(
         retrieval_mode=RAGRetrievalMode.HYBRID_GRAPH,
@@ -101,9 +55,9 @@ def test_acl_filter_builder_and_merge():
 
 
 def test_rag_provider_matrix_covers_all_supported_providers():
-    assert set(RAG_CAPABILITY_MATRIX) == {"open_source", "azure", "aws", "gcp"}
-    assert "hybrid" in RAG_CAPABILITY_MATRIX["azure"].hybrid.lower()
-    assert "acl" in RAG_CAPABILITY_MATRIX["aws"].acl_filtering.lower()
+    assert set(RAG_CAPABILITY_MATRIX) == {"open_source"}
+    assert "qdrant" in RAG_CAPABILITY_MATRIX["open_source"].vector.lower()
+    assert "acl" in RAG_CAPABILITY_MATRIX["open_source"].acl_filtering.lower()
 
 
 def test_rag_provider_registry_rejects_unknown_provider():

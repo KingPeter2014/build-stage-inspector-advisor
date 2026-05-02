@@ -36,7 +36,7 @@ class CompletionResponse:
 class AbstractLLMGateway(ABC):
     """
     Uniform interface for all LLM backends.
-    Implementations: LiteLLM (OSS), Azure OpenAI, Amazon Bedrock, Vertex AI.
+    Implementation: LiteLLM routes to OpenAI, Anthropic, or local-compatible models.
     """
 
     @abstractmethod

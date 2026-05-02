@@ -13,26 +13,8 @@ def _oss_factory(**kwargs: Any) -> AbstractRAGRetriever:
     return build_rag_retriever(**kwargs)
 
 
-def _azure_factory(**kwargs: Any) -> AbstractRAGRetriever:
-    from providers.azure.serving.rag import build_rag_retriever
-    return build_rag_retriever(**kwargs)
-
-
-def _aws_factory(**kwargs: Any) -> AbstractRAGRetriever:
-    from providers.aws.serving.rag import build_rag_retriever
-    return build_rag_retriever(**kwargs)
-
-
-def _gcp_factory(**kwargs: Any) -> AbstractRAGRetriever:
-    from providers.gcp.serving.rag import build_rag_retriever
-    return build_rag_retriever(**kwargs)
-
-
 RAG_RETRIEVER_FACTORIES: dict[str, RetrieverFactory] = {
     "open_source": _oss_factory,
-    "azure": _azure_factory,
-    "aws": _aws_factory,
-    "gcp": _gcp_factory,
 }
 
 

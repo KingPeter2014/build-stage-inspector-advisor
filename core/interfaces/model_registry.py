@@ -34,7 +34,7 @@ class ModelCard:
 class AbstractModelRegistry(ABC):
     """
     Uniform interface for model registries.
-    Implementations: MLflow Registry (OSS), Azure ML Registry, SageMaker Registry, Vertex AI Registry.
+    Implementation: MLflow Registry.
     """
 
     @abstractmethod

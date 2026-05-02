@@ -109,9 +109,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v3
-        with:
-          kubeconfig: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          printf '%s' "${{ secrets.KUBECONFIG }}" > ~/.kube/config
       - name: Deploy canary (10% traffic)
         run: |
           helm upgrade --install llmops-canary helm/llmops \
@@ -131,9 +131,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v3
-        with:
-          kubeconfig: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          printf '%s' "${{ secrets.KUBECONFIG }}" > ~/.kube/config
       - name: Full rollout
         run: |
           helm upgrade --install llmops helm/llmops \

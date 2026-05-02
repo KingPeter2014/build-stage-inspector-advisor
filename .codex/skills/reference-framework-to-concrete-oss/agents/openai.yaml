@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reference Framework Adapter"
+  short_description: "Adapt generic frameworks into OSS concrete projects"
+  default_prompt: "Use this skill to remove unused platform targets, preserve data-source extensibility, and document an OSS concrete project adaptation."

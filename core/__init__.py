@@ -1,7 +1,5 @@
 """
-core — shared interfaces and schemas for all LLMOps provider stacks.
+core - shared interfaces and schemas for the open-source runtime.
 
-Import rules:
-  - core imports only stdlib and pydantic (zero cloud SDKs).
-  - Every provider (open_source, azure, aws, gcp) implements these ABCs.
+Import rule: core imports only stdlib and pydantic.
 """

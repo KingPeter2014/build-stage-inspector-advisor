@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
 scripts/run_ingestion.py
-Provider-aware ingestion pipeline: source → clean → chunk → embed → vector store.
+Open-source ingestion pipeline: source -> clean -> chunk -> embed -> vector store.
 
 Usage:
-    python scripts/run_ingestion.py                              # open_source (default)
-    python scripts/run_ingestion.py --provider azure             # ADLS Gen2 → Azure AI Search
-    python scripts/run_ingestion.py --provider aws               # S3 → OpenSearch
-    python scripts/run_ingestion.py --provider gcp               # GCS → Vertex Vector Search
+    python scripts/run_ingestion.py
     python scripts/run_ingestion.py --source-dir ./docs --env staging
 """
 import argparse
@@ -26,23 +23,10 @@ log = logging.getLogger("ingestion")
 
 
 def _build_source_and_store(provider: str, source_dir: str, env: str):
-    """Return (connector, vector_store) for the selected provider."""
-    if provider == "azure":
-        from providers.azure.data_ingestion.adf_connector import ADLSGen2Connector
-        from providers.azure.storage.ai_search_store import AzureAISearchStore
-        return ADLSGen2Connector(prefix=source_dir), AzureAISearchStore()
+    """Return (connector, vector_store) for the OSS runtime."""
+    if provider != "open_source":
+        raise ValueError("Only the open_source runtime provider is supported.")
 
-    if provider == "aws":
-        from providers.aws.data_ingestion.glue_connector import S3SourceConnector
-        from providers.aws.storage.opensearch_store import OpenSearchVectorStore
-        return S3SourceConnector(prefix=source_dir), OpenSearchVectorStore()
-
-    if provider == "gcp":
-        from providers.gcp.data_ingestion.dataflow_connector import GCSSourceConnector
-        from providers.gcp.storage.vertex_vector_search import VertexVectorSearch
-        return GCSSourceConnector(prefix=source_dir), VertexVectorSearch()
-
-    # Default: open_source
     from config.settings import get_settings
     from data_ingestion.sources.file_connector import LocalFileConnector
     from storage.vector_store.qdrant_store import QdrantVectorStore
@@ -92,8 +76,8 @@ def run_ingestion(provider: str, source_dir: str, env: str = "development") -> d
 def main():
     parser = argparse.ArgumentParser(description="LLMOps ingestion pipeline")
     parser.add_argument("--provider", default="open_source",
-                        choices=["open_source", "azure", "aws", "gcp"],
-                        help="Target provider stack")
+                        choices=["open_source"],
+                        help="Runtime provider. Only open_source is supported.")
     parser.add_argument("--source-dir", default="./data/raw_docs")
     parser.add_argument("--env", default="development",
                         choices=["development", "staging", "production"])
