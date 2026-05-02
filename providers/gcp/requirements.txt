@@ -1,0 +1,28 @@
+# providers/gcp/requirements.txt
+# Install ON TOP OF the root requirements.txt for the GCP Vertex AI stack.
+# pip install -r requirements.txt -r providers/gcp/requirements.txt
+
+# ── Vertex AI / Google Cloud AI Platform ──────────────────────────────────────
+google-cloud-aiplatform>=1.60.0
+vertexai>=1.60.0                        # Alias; install via google-cloud-aiplatform[preview]
+
+# ── Google Cloud Storage (data lake) ─────────────────────────────────────────
+google-cloud-storage>=2.17.0
+
+# ── Google Cloud Monitoring + Trace (observability) ──────────────────────────
+google-cloud-monitoring>=2.21.0
+opentelemetry-exporter-gcp-trace>=1.6.0
+
+# ── Google Auth ───────────────────────────────────────────────────────────────
+google-auth>=2.29.0
+google-auth-httplib2>=0.2.0
+
+# ── HTTP requests (Perspective API, Dataflow REST) ────────────────────────────
+requests>=2.32.0
+
+# ── Cloud Memorystore / Redis ─────────────────────────────────────────────────
+redis>=5.0.0
+
+# ── Document parsing ──────────────────────────────────────────────────────────
+pypdf>=4.0.0
+beautifulsoup4>=4.12.0

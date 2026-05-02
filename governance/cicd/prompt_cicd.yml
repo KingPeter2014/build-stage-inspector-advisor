@@ -1,0 +1,85 @@
+name: Prompt CI/CD
+
+on:
+  push:
+    paths:
+      - 'storage/prompt_registry/**'
+      - 'tests/eval_suites/**'
+      - 'data/eval_datasets/**'
+  pull_request:
+    paths:
+      - 'storage/prompt_registry/**'
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+  LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+  LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+
+jobs:
+  # ── Stage 1: Lint & validate prompt schemas ──────────────────────────────────
+  prompt-lint:
+    name: Lint prompts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate prompt schemas
+        run: python scripts/validate_prompts.py
+
+  # ── Stage 2: Regression eval suite ──────────────────────────────────────────
+  eval-regression:
+    name: Regression evals
+    needs: prompt-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run regression eval suite
+        run: python scripts/run_evals.py --suite regression --min-pass-rate 0.90
+      - name: Upload eval report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: reports/eval_report.json
+
+  # ── Stage 3: Safety & guardrail checks ──────────────────────────────────────
+  safety-check:
+    name: Safety evals
+    needs: prompt-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run safety eval suite
+        run: python scripts/run_evals.py --suite safety --min-pass-rate 0.99
+
+  # ── Stage 4: Promote prompt to registry on merge ────────────────────────────
+  promote-prompt:
+    name: Promote to prompt registry
+    needs: [eval-regression, safety-check]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Push prompt versions to Langfuse registry
+        run: python scripts/push_prompts.py --env production

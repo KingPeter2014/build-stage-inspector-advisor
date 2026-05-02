@@ -1,0 +1,48 @@
+{
+  "mappings": [
+    {
+      "name": "Azure OpenAI chat completion stub",
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/openai/deployments/.*/chat/completions.*"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "id": "chatcmpl-test-{{randomValue type='UUID'}}",
+          "object": "chat.completion",
+          "model": "gpt-4o",
+          "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": "This is a WireMock stub response." },
+            "finish_reason": "stop"
+          }],
+          "usage": { "prompt_tokens": 10, "completion_tokens": 12, "total_tokens": 22 }
+        }
+      }
+    },
+    {
+      "name": "OpenAI chat completion stub",
+      "request": {
+        "method": "POST",
+        "url": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "id": "chatcmpl-test-{{randomValue type='UUID'}}",
+          "object": "chat.completion",
+          "model": "gpt-4o",
+          "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": "This is a WireMock stub response." },
+            "finish_reason": "stop"
+          }],
+          "usage": { "prompt_tokens": 10, "completion_tokens": 12, "total_tokens": 22 }
+        }
+      }
+    }
+  ]
+}

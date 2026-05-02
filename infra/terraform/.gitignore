@@ -1,0 +1,26 @@
+# Local state — never commit; use remote backend instead
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+# tfvars contain real secrets and env-specific values
+*.tfvars
+!*.tfvars.example
+
+# Terraform working directory and lock files
+.terraform/
+.terraform.lock.hcl
+
+# Plan files (contain sensitive values in binary form)
+*.tfplan
+tfplan.binary
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files — local developer overrides, not for source control
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

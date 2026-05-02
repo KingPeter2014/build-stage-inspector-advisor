@@ -1,0 +1,37 @@
+# providers/azure/requirements.txt
+# Install ON TOP OF the root requirements.txt for the Azure AI Foundry stack.
+# pip install -r requirements.txt -r providers/azure/requirements.txt
+
+# ── Identity & Core ───────────────────────────────────────────────────────────
+azure-identity>=1.17.0
+azure-core>=1.30.0
+
+# ── Azure OpenAI / AI Inference ───────────────────────────────────────────────
+openai>=1.40.0                          # Azure OpenAI via openai SDK
+azure-ai-inference>=1.0.0b4             # azure-ai-inference for non-OpenAI models
+
+# ── Azure AI Foundry Agents ───────────────────────────────────────────────────
+azure-ai-projects>=1.0.0b4
+
+# ── Azure AI Search (vector store) ───────────────────────────────────────────
+azure-search-documents>=11.6.0
+
+# ── Azure Blob Storage / ADLS Gen2 ───────────────────────────────────────────
+azure-storage-blob>=12.21.0
+azure-storage-file-datalake>=12.15.0
+
+# ── Azure ML (experiments + model registry) ──────────────────────────────────
+azure-ai-ml>=1.19.0
+
+# ── Azure Content Safety (guardrails) ────────────────────────────────────────
+azure-ai-contentsafety>=1.0.0
+
+# ── Azure Monitor / App Insights (observability) ─────────────────────────────
+azure-monitor-opentelemetry-exporter>=1.0.0
+azure-monitor-opentelemetry>=1.6.0
+
+# ── Azure Data Factory (ETL) ─────────────────────────────────────────────────
+azure-mgmt-datafactory>=6.0.0
+
+# ── Azure Cache for Redis ─────────────────────────────────────────────────────
+redis>=5.0.0                            # shared with OSS stack; Azure uses TLS URL
