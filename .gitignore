@@ -19,3 +19,4 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+.codex-tools/
