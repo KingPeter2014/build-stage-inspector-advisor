@@ -63,6 +63,7 @@ class QdrantVectorStore:
                 vector=vector,
                 payload={
                     "document_id": chunk.document_id,
+                    "chunk_id": chunk.id,
                     "content": chunk.content,
                     "chunk_index": chunk.chunk_index,
                     **chunk.metadata,

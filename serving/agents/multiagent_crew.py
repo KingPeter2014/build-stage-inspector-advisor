@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from crewai import Agent, Crew, Process, Task
 from crewai.tools import BaseTool
-from pydantic import Field
 
 from observability.tracing.tracer import get_tracer
 from serving.guardrails.guardrail_runner import GuardrailRunner

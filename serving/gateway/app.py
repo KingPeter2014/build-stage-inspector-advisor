@@ -18,6 +18,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from litellm import acompletion
 from pydantic import BaseModel
 
+from core.interfaces.agent_runner import AgentInput as RunnerAgentInput, AgentMode
+from core.schemas.agent import AgentInput as AgentRunRequest
+from core.schemas.agent import AgentOutput as AgentRunResponse
+from core.schemas.rag import RAGQueryRequest, RAGQueryResponse
 from observability.metrics.prometheus_metrics import (
     latency_histogram,
     request_counter,
@@ -71,11 +75,113 @@ class ChatResponse(BaseModel):
     cached: bool = False
 
 
+def get_agent_runner():
+    from providers.open_source.serving.agents import OSSAgentRunner
+
+    return OSSAgentRunner()
+
+
 # ── Health check ───────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "cache_size": _cache.size}
+
+
+@app.post("/v1/rag/query", response_model=RAGQueryResponse)
+async def rag_query(
+    req: RAGQueryRequest,
+    ctx: PolicyContext = Depends(get_policy_context),
+):
+    start = time.perf_counter()
+
+    with tracer.start_as_current_span("rag_query_endpoint") as span:
+        span.set_attribute("user_id", ctx.user.id)
+        span.set_attribute("team_id", ctx.user.team_id)
+        span.set_attribute("top_k", req.top_k)
+
+        ctx.enforce_rate_limit()
+        ctx.enforce_permission("rag:query", "rag")
+        ctx.check_input(req.question)
+
+        try:
+            from serving.rag.service import query_knowledge_base_local
+
+            response = query_knowledge_base_local(req)
+            output_result = ctx.check_output(response.answer)
+            response.answer = output_result.sanitised_text or response.answer
+
+            ctx.audit(
+                action="rag_query",
+                model=response.model or "rag",
+                input_text=req.question,
+                output_text=response.answer,
+                guardrail_result=output_result,
+                latency_seconds=round(time.perf_counter() - start, 4),
+                retrieved_sources=len(response.sources),
+            )
+            return response
+        except HTTPException:
+            raise
+        except Exception as e:
+            span.record_exception(e)
+            log.error("rag_query_error", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/agents/run", response_model=AgentRunResponse)
+async def agent_run(
+    req: AgentRunRequest,
+    ctx: PolicyContext = Depends(get_policy_context),
+    runner=Depends(get_agent_runner),
+):
+    start = time.perf_counter()
+
+    with tracer.start_as_current_span("agent_run") as span:
+        span.set_attribute("user_id", ctx.user.id)
+        span.set_attribute("team_id", ctx.user.team_id)
+        span.set_attribute("agent_mode", req.mode)
+
+        ctx.enforce_rate_limit()
+        ctx.enforce_permission("agent:run", "agent")
+        ctx.check_input(req.message)
+
+        mode = AgentMode.MULTI if req.mode == AgentMode.MULTI.value else AgentMode.SINGLE
+        try:
+            result = runner.run(RunnerAgentInput(
+                message=req.message,
+                session_id=req.session_id,
+                context=req.context,
+                mode=mode,
+            ))
+            output_result = ctx.check_output(result.response)
+            safe_response = output_result.sanitised_text or result.response
+
+            ctx.audit(
+                action="agent_run",
+                model="agent",
+                input_text=req.message,
+                output_text=safe_response,
+                guardrail_result=output_result,
+                latency_seconds=round(time.perf_counter() - start, 4),
+                mode=mode.value,
+            )
+
+            return AgentRunResponse(
+                response=safe_response,
+                session_id=result.session_id,
+                tool_calls=result.tool_calls,
+                iterations=result.iterations,
+                blocked=result.blocked,
+                block_reason=result.block_reason,
+                provider=result.provider,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            span.record_exception(e)
+            log.error("agent_run_error", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Chat completion endpoint ───────────────────────────────────────────────────
@@ -102,7 +208,7 @@ async def chat_completions(
         last_user_msg = next(
             (m.content for m in reversed(req.messages) if m.role == "user"), ""
         )
-        input_result = ctx.check_input(last_user_msg)
+        ctx.check_input(last_user_msg)
 
         # ── 4. Semantic cache lookup ──────────────────────────────────────────
         cache_key = f"{req.model}::{last_user_msg}"

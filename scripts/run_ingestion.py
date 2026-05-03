@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_ingestion.etl.cleaner import DocumentCleaner
 from data_ingestion.chunking.chunker import ChunkStrategy, get_chunker
+from data_ingestion.enrichment import enrich_document_metadata
+from data_ingestion.identity import sha256_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ingestion")
@@ -31,11 +33,12 @@ def _build_source_and_store(provider: str, source_dir: str, env: str):
     from data_ingestion.sources.file_connector import LocalFileConnector
     from storage.vector_store.qdrant_store import QdrantVectorStore
     settings = get_settings()
+    collection_name = settings.qdrant_collection_name or f"buildstage_documents_{env}"
     return (
         LocalFileConnector(source_dir),
         QdrantVectorStore(url=settings.qdrant_url,
                           api_key=settings.qdrant_api_key or None,
-                          collection_name=f"llmops_{env}"),
+                          collection_name=collection_name),
     )
 
 
@@ -59,7 +62,19 @@ def run_ingestion(provider: str, source_dir: str, env: str = "development") -> d
             if cleaned.pii_detected:
                 log.warning(f"PII redacted in doc {raw_doc.id}")
 
-            chunks = chunker.chunk(cleaned.id, cleaned.content, metadata=cleaned.metadata)
+            metadata = enrich_document_metadata(
+                source=cleaned.source,
+                metadata=cleaned.metadata,
+                source_type=cleaned.source_type,
+            )
+            document_hash = sha256_text(cleaned.content)
+            metadata = {
+                **metadata,
+                "document_id": cleaned.id,
+                "document_hash": document_hash,
+            }
+            chunks = chunker.chunk(cleaned.id, cleaned.content, metadata=metadata)
+            vector_store.delete_by_document(cleaned.id)
             vector_store.upsert_chunks(chunks)
             stats["chunks_indexed"] += len(chunks)
             log.info(f"Indexed {raw_doc.id} → {len(chunks)} chunks")

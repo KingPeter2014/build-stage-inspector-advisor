@@ -33,7 +33,7 @@ local/cloud/sharepoint/web sources
 |---|---|---|---|
 | Public gateway | FastAPI app | `http://localhost:4000` | `https://advisor.<domain>` |
 | LLM routing | LiteLLM | `http://localhost:4000` in Compose, or separate from app when deployed | `https://litellm.<domain>` or internal `http://litellm:4000` |
-| Vector database | Qdrant | `http://localhost:6333/dashboard` | `https://qdrant.<domain>` or private `http://qdrant:6333` |
+| Vector database | Qdrant Cloud | `https://fe4f808f-27d6-4bdd-b403-482c42926700.europe-west6-0.gcp.cloud.qdrant.io:6333/dashboard` | `https://fe4f808f-27d6-4bdd-b403-482c42926700.europe-west6-0.gcp.cloud.qdrant.io:6333` |
 | Cache/rate limit | Redis | `redis://localhost:6379` in test stack | `redis://redis.<domain>:6379` or private service DNS |
 | Object store | S3-compatible store / MinIO / LocalStack | `http://localhost:4566` in test stack | `https://objects.<domain>` or private object-store endpoint |
 | Experiment tracking | MLflow | `http://localhost:5000` | `https://mlflow.<domain>` |
@@ -54,7 +54,7 @@ collectors private unless there is a deliberate admin access path.
 |---|---|---|
 | LLM providers | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, optional local model route key | Use LiteLLM routes and model fallbacks; keep provider keys out of docs and source |
 | LiteLLM | `LITELLM_MASTER_KEY` | Required for gateway access control when LiteLLM is exposed |
-| Qdrant | `QDRANT_API_KEY` | Required for hosted or secured Qdrant |
+| Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | Use the Qdrant Cloud URL above. Store the API key only in `.env.development`, deployment secrets, or a secret manager |
 | Redis | `REDIS_URL` with password if secured | Used for semantic cache and rate-limit state |
 | Object storage | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_ENDPOINT_URL`, `S3_BUCKET` | Treat as S3-compatible storage credentials, not a cloud deployment target |
 | MLflow | `MLFLOW_TRACKING_URI`, backend DB credentials if externalized | Use a persistent backend store and artifact store outside local demos |
@@ -79,6 +79,7 @@ Store production values in a secret manager or deployment secret store. The
 | Stream connector | `data_ingestion/sources/stream_connector.py` | Event ingestion through Kafka |
 | Cleaner | `data_ingestion/etl/cleaner.py` | Text normalization and PII handling |
 | Chunker | `data_ingestion/chunking/chunker.py` | Fixed-token and sentence chunking |
+| Metadata enrichment | `data_ingestion/enrichment/documents.py` | Canonical document metadata for NCC, contracts, policies, legal material, web, and SharePoint sources |
 
 Primary ingestion starts from `data/raw_docs`. Future source connectors should
 preserve the same downstream contract and add metadata needed for citations,
@@ -87,24 +88,40 @@ filtering, trust scoring, and ACL checks.
 Recommended document metadata:
 
 ```text
-source_type, source_uri, source_title, source_version, retrieved_at,
-document_family, jurisdiction, effective_date, section, clause,
-building_class, inspection_stage, project_id, contract_id,
-tenant_id, acl_user_ids, acl_group_ids, trust_level
+document_type, source_type, source_uri, source_title, source_version,
+retrieved_at, document_family, jurisdiction, effective_date, section, clause,
+volume, building_class, inspection_stage, project_id, contract_id, tenant_id,
+acl_user_ids, acl_group_ids, trust_level, tags
 ```
+
+Use `document_type` to keep heterogeneous corpora filterable. Initial values are
+`regulation`, `contract`, `policy`, `legal`, `standard`, `guidance`, `report`,
+`web`, and `other`.
 
 ## Storage And Retrieval
 
 Qdrant is the primary vector store. Use one collection per environment or tenant
 boundary unless there is a clear reason to share collections.
 
+Configured Qdrant Cloud endpoint:
+
+```text
+QDRANT_URL=https://fe4f808f-27d6-4bdd-b403-482c42926700.europe-west6-0.gcp.cloud.qdrant.io:6333
+```
+
+Keep `QDRANT_API_KEY` out of tracked files. Put it in `.env.development` for
+local work and in deployment secrets for staging/production.
+
 Recommended collection naming:
 
 ```text
-buildstage_development
-buildstage_staging
-buildstage_production
+buildstage_documents_development
+buildstage_documents_staging
+buildstage_documents_production
 ```
+
+Override with `QDRANT_COLLECTION_NAME` when a deployment needs a tenant-specific
+or migration-specific collection.
 
 RAG settings:
 
@@ -132,6 +149,20 @@ Best-practice production deployment:
 
 Use LiteLLM for model routing and fallback. The default model routes live in
 `config/litellm_config.yaml`.
+
+Key API paths:
+
+```text
+GET  /health
+POST /v1/chat/completions
+POST /v1/agents/run
+```
+
+The agent endpoint calls the open-source agent runner, whose
+`search_knowledge_base` tool invokes `POST /v1/rag/query` over HTTP. The RAG
+endpoint owns the Qdrant-backed pipeline through `serving/rag/service.py`, so
+agent orchestration and retrieval can be deployed as separate REST-facing
+microservices.
 
 ## Observability
 

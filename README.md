@@ -104,6 +104,12 @@ Place source files in `data/raw_docs`, then run:
 python scripts/run_ingestion.py --source-dir data/raw_docs
 ```
 
+The ingestion pipeline is idempotent for a stable source URI. Each document gets
+a stable `document_id` plus a `document_hash`; each chunk gets a deterministic
+Qdrant point ID plus `chunk_id` and `chunk_hash` metadata. Before re-indexing a
+document, existing chunks with the same `document_id` are deleted so repeated
+runs replace the document instead of duplicating it.
+
 ### Run Evals
 
 ```bash

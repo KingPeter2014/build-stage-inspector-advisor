@@ -111,7 +111,7 @@ def main():
     Path(REPORT_PATH).parent.mkdir(parents=True, exist_ok=True)
     Path(REPORT_PATH).write_text(json.dumps(report.to_dict(), indent=2))
 
-    print(f"\n── Eval Report ──────────────────────────────")
+    print("\n── Eval Report ──────────────────────────────")
     print(f"  Total:     {report.total}")
     print(f"  Passed:    {report.passed}")
     print(f"  Failed:    {report.failed}")
@@ -120,7 +120,7 @@ def main():
     print(f"  Metrics:   {report.metric_scores}")
 
     if not report.is_gate_passing(args.min_pass_rate):
-        print(f"\nFailed cases:")
+        print("\nFailed cases:")
         for failure in report.failures[:3]:
             print(f"  Input: {failure['input'][:80]}...")
         sys.exit(1)

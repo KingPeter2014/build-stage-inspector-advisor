@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Vector store
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
+    qdrant_collection_name: str = ""
     pgvector_dsn: str = ""
 
     # Object store
@@ -62,6 +63,7 @@ class Settings(BaseSettings):
     kafka_topic_ingestion: str = "llmops.ingestion"
 
     # RAG behavior
+    rag_api_url: str = "http://localhost:4000/v1/rag/query"
     rag_retrieval_mode: str = "vector"
     rag_security_mode: str = "none"
     graph_enabled: bool = False
