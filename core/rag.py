@@ -6,12 +6,11 @@ such as hybrid search, graph augmentation, reranking, and ACL-aware filters.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from core.framework import FrameworkMode, get_framework_mode
+from core.framework import FrameworkMode, get_config_value, get_framework_mode
 
 
 class RAGRetrievalMode(str, Enum):
@@ -47,10 +46,10 @@ class RAGOptions:
     @classmethod
     def from_env(cls) -> "RAGOptions":
         return cls(
-            retrieval_mode=RAGRetrievalMode(os.getenv("RAG_RETRIEVAL_MODE", "vector")),
-            security_mode=RAGSecurityMode(os.getenv("RAG_SECURITY_MODE", "none")),
-            graph_enabled=os.getenv("GRAPH_ENABLED", "false").lower() in ("1", "true", "yes"),
-            reranker_enabled=os.getenv("RERANKER_ENABLED", "false").lower() in ("1", "true", "yes"),
+            retrieval_mode=RAGRetrievalMode(get_config_value("RAG_RETRIEVAL_MODE", "vector")),
+            security_mode=RAGSecurityMode(get_config_value("RAG_SECURITY_MODE", "none")),
+            graph_enabled=get_config_value("GRAPH_ENABLED", "false").lower() in ("1", "true", "yes"),
+            reranker_enabled=get_config_value("RERANKER_ENABLED", "false").lower() in ("1", "true", "yes"),
             framework_mode=get_framework_mode(),
         )
 

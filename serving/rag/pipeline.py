@@ -19,6 +19,24 @@ from serving.rag.retriever import GenericRAGRetriever
 tracer = get_tracer("rag_pipeline")
 
 
+DEFAULT_RAG_QA_TEMPLATE = """You are Build Stage Inspector Advisor, a source-grounded assistant for Australian construction-stage inspection advice.
+
+Use ONLY the context below. If the context does not contain enough evidence, say "I don't know based on the provided sources."
+
+When answering:
+- cite every material source using the source title plus clause, section, or volume when available;
+- distinguish regulation, standard, contract, project, and web evidence when metadata shows the document type;
+- mention conflicts between retrieved sources instead of resolving them silently;
+- do not provide legal, engineering, certification, or safety determinations that require a qualified professional.
+
+Context:
+{{ context }}
+
+Question: {{ question }}
+
+Answer:"""
+
+
 @dataclass
 class RAGResponse:
     answer: str
@@ -52,7 +70,17 @@ class RAGPipeline:
         context_parts = []
         total_chars = 0
         for r in results:
-            chunk = f"[Source: {r.metadata.get('filename', r.document_id)}]\n{r.content}"
+            metadata = r.metadata or {}
+            title = metadata.get("source_title") or metadata.get("filename") or r.document_id
+            locator = metadata.get("clause") or metadata.get("section") or metadata.get("volume") or ""
+            document_type = metadata.get("document_type") or "unknown"
+            stage = metadata.get("inspection_stage") or ""
+            source_bits = [f"title={title}", f"type={document_type}"]
+            if locator:
+                source_bits.append(f"locator={locator}")
+            if stage:
+                source_bits.append(f"stage={stage}")
+            chunk = f"[Source: {'; '.join(source_bits)}]\n{r.content}"
             if total_chars + len(chunk) > self.max_context_chars:
                 break
             context_parts.append(chunk)
@@ -104,12 +132,8 @@ class RAGPipeline:
                 prompt_version = self.prompt_registry.push(PromptVersion(
                     name="rag_qa",
                     version=1,
-                    template=(
-                        "You are a helpful assistant. Answer the question using ONLY the context below. "
-                        "If the answer is not in the context, say 'I don't know'.\n\n"
-                        "Context:\n{{ context }}\n\n"
-                        "Question: {{ question }}\n\nAnswer:"
-                    ),
+                    template=DEFAULT_RAG_QA_TEMPLATE,
+                    tags=["advisor", "rag", "construction"],
                 ))
 
             prompt_text = prompt_version.render(context=context, question=question)

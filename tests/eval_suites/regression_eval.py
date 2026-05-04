@@ -21,49 +21,29 @@ REPORT_PATH = "reports/eval_report.json"
 
 
 def seed_golden_dataset() -> None:
-    """Create a minimal golden dataset if one doesn't exist."""
+    """Create a minimal advisor-domain golden dataset if one doesn't exist."""
     samples = [
         EvalSample(
-            input="What is retrieval-augmented generation?",
+            input="For a new Victorian Class 1 build at pre-start, what should I check?",
             expected_output=(
-                "RAG is a technique that combines a retrieval system with a generative "
-                "model. It fetches relevant documents from a knowledge base and uses them "
-                "as context for generating accurate, grounded responses."
+                "Check contract scope, permit documents, approved plans, inspection "
+                "requirements, and the applicable 7-star energy compliance pathway."
             ),
             actual_output="",   # Filled at eval time
         ),
         EvalSample(
-            input="Name three key components of LLMOps.",
+            input="For bathroom waterproofing in a Victorian Class 1 home, what should the advisor look for under NCC DTS?",
             expected_output=(
-                "Three key components are: data ingestion pipelines, model evaluation frameworks, "
-                "and observability tooling including distributed tracing and metrics."
+                "Check NCC wet-area waterproofing evidence, AS 3740 references, penetrations, "
+                "junctions, floor wastes, and inspection records."
             ),
             actual_output="",
         ),
         EvalSample(
-            input="What is the purpose of a prompt registry?",
+            input="At frame stage, can the advisor certify structural safety from a builder message alone?",
             expected_output=(
-                "A prompt registry stores and versions prompts as first-class artefacts, "
-                "allowing teams to track changes, roll back regressions, and deploy prompts "
-                "through CI/CD pipelines."
-            ),
-            actual_output="",
-        ),
-        EvalSample(
-            input="Why is a golden dataset important in LLM CI/CD?",
-            expected_output=(
-                "A golden dataset provides a curated set of input/expected-output pairs "
-                "that serve as regression tests. It catches prompt or model regressions "
-                "before they reach production."
-            ),
-            actual_output="",
-        ),
-        EvalSample(
-            input="What does the champion/challenger pattern mean in model deployment?",
-            expected_output=(
-                "The champion is the current production model. A challenger is a new candidate "
-                "model that runs in parallel receiving a small slice of traffic. Metrics are "
-                "compared before the challenger is promoted to replace the champion."
+                "No. The advisor should not certify structural safety and should require "
+                "building surveyor or engineering evidence."
             ),
             actual_output="",
         ),
@@ -89,7 +69,7 @@ def fill_actual_outputs(samples: list[EvalSample], model: str) -> list[EvalSampl
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LLMOps regression eval suite")
+    parser = argparse.ArgumentParser(description="Build Stage Inspector Advisor regression eval suite")
     parser.add_argument("--model", default="gpt-4o", help="Model to evaluate")
     parser.add_argument("--min-pass-rate", type=float, default=0.90, help="Minimum pass rate gate")
     parser.add_argument("--seed", action="store_true", help="Seed the golden dataset if missing")

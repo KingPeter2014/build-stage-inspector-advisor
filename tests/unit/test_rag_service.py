@@ -37,9 +37,20 @@ class FakePipeline:
 
 
 def test_build_filter_keeps_optional_document_type_and_tenant():
-    assert build_filter(document_type="contract", tenant_id="t1") == {
+    assert build_filter(
+        document_type="contract",
+        tenant_id="t1",
+        inspection_stage="lockup",
+        jurisdiction="AU",
+        building_class="1a",
+        tags=["ncc"],
+    ) == {
         "document_type": "contract",
         "tenant_id": "t1",
+        "inspection_stage": "lockup",
+        "jurisdiction": "AU",
+        "building_class": "1a",
+        "tags": ["ncc"],
     }
     assert build_filter() == {}
 
@@ -60,12 +71,21 @@ def test_agent_rag_tool_uses_pipeline_with_metadata_filter():
         query="What is required?",
         document_type="regulation",
         tenant_id="tenant-a",
+        inspection_stage="waterproofing",
+        jurisdiction="AU",
+        building_class="1a",
         pipeline=pipeline,
     )
 
     assert pipeline.called_with == (
         "What is required?",
-        {"document_type": "regulation", "tenant_id": "tenant-a"},
+        {
+            "document_type": "regulation",
+            "tenant_id": "tenant-a",
+            "inspection_stage": "waterproofing",
+            "jurisdiction": "AU",
+            "building_class": "1a",
+        },
         None,
     )
     assert "Use the cited NCC clause." in text

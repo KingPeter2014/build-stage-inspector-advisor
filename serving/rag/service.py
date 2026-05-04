@@ -44,13 +44,34 @@ def build_default_rag_pipeline(top_k: int = 5):
     )
 
 
-def build_filter(document_type: str = "", tenant_id: str = "") -> dict[str, Any]:
-    filters: dict[str, Any] = {}
-    if document_type:
-        filters["document_type"] = document_type
-    if tenant_id:
-        filters["tenant_id"] = tenant_id
-    return filters
+def build_filter(
+    document_type: str = "",
+    tenant_id: str = "",
+    inspection_stage: str = "",
+    jurisdiction: str = "",
+    building_class: str = "",
+    project_id: str = "",
+    contract_id: str = "",
+    document_family: str = "",
+    source_version: str = "",
+    trust_level: str = "",
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    filters: dict[str, Any] = {
+        "document_type": document_type,
+        "tenant_id": tenant_id,
+        "inspection_stage": inspection_stage,
+        "jurisdiction": jurisdiction,
+        "building_class": building_class,
+        "project_id": project_id,
+        "contract_id": contract_id,
+        "document_family": document_family,
+        "source_version": source_version,
+        "trust_level": trust_level,
+    }
+    if tags:
+        filters["tags"] = tags
+    return {key: value for key, value in filters.items() if value not in ("", None, [])}
 
 
 def rag_response_to_schema(response: Any, session_id: str = "") -> RAGQueryResponse:
@@ -125,6 +146,15 @@ def search_knowledge_base_text(
     query: str,
     document_type: str = "",
     tenant_id: str = "",
+    inspection_stage: str = "",
+    jurisdiction: str = "",
+    building_class: str = "",
+    project_id: str = "",
+    contract_id: str = "",
+    document_family: str = "",
+    source_version: str = "",
+    trust_level: str = "",
+    tags: list[str] | None = None,
     top_k: int = 5,
     api_url: str = "",
     pipeline: Any | None = None,
@@ -132,7 +162,19 @@ def search_knowledge_base_text(
     """Run a RAG query and return a compact text response for agent tools."""
     request = RAGQueryRequest(
         question=query,
-        filter_by=build_filter(document_type=document_type, tenant_id=tenant_id),
+        filter_by=build_filter(
+            document_type=document_type,
+            tenant_id=tenant_id,
+            inspection_stage=inspection_stage,
+            jurisdiction=jurisdiction,
+            building_class=building_class,
+            project_id=project_id,
+            contract_id=contract_id,
+            document_family=document_family,
+            source_version=source_version,
+            trust_level=trust_level,
+            tags=tags,
+        ),
         top_k=top_k,
     )
     response = (

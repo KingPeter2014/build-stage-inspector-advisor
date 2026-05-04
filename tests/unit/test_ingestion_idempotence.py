@@ -35,7 +35,7 @@ def test_ingestion_deletes_existing_document_before_upserting_hashed_chunks(monk
     monkeypatch.setattr(
         ingestion_script,
         "_build_source_and_store",
-        lambda provider, source_dir, env: (FakeConnector(), store),
+        lambda provider, source_dir, env, *args: (FakeConnector(), store),
     )
 
     stats = ingestion_script.run_ingestion(
@@ -63,7 +63,7 @@ def test_ingestion_chunk_ids_repeat_for_same_document(monkeypatch):
     monkeypatch.setattr(
         ingestion_script,
         "_build_source_and_store",
-        lambda provider, source_dir, env: (FakeConnector(), next(stores)),
+        lambda provider, source_dir, env, *args: (FakeConnector(), next(stores)),
     )
 
     ingestion_script.run_ingestion("open_source", "data/raw_docs/NCC 2022")

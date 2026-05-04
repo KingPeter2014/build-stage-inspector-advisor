@@ -33,24 +33,29 @@ def _write_stub_report(name: str, args, decision) -> None:
 
 
 def run_regression(args):
-    if args.framework_mode == FrameworkMode.REFERENCE and not os.getenv("LLMOPS_RUN_LIVE_EVALS"):
+    live_evals = os.getenv("BUILDSTAGE_RUN_LIVE_EVALS") or os.getenv("LLMOPS_RUN_LIVE_EVALS")
+    if args.framework_mode == FrameworkMode.REFERENCE and not live_evals:
         dataset_path = Path("data/eval_datasets/regression_golden.jsonl")
         if args.seed or not dataset_path.exists():
             dataset_path.parent.mkdir(parents=True, exist_ok=True)
             seed_rows = [
                 {
-                    "input": "What is retrieval-augmented generation?",
-                    "expected_output": "RAG retrieves relevant context before generation.",
+                    "input": "For a new Victorian Class 1 build at pre-start, what should I check before advising that the project is ready to start?",
+                    "expected_output": "Check contract scope, permit documents, approved plans, domestic building insurance where required, and the applicable 7-star energy compliance pathway before giving advisory readiness guidance.",
                     "actual_output": "",
-                    "retrieval_context": [],
-                    "metadata": {"mode": "reference"},
+                    "retrieval_context": [
+                        "Victorian domestic building contracts and NCC 2022 energy compliance documents should be available before start."
+                    ],
+                    "metadata": {"mode": "reference", "category": "pre_start_readiness"},
                 },
                 {
-                    "input": "Name three key components of LLMOps.",
-                    "expected_output": "Evaluation, observability, and governance.",
+                    "input": "For bathroom waterproofing in a Victorian Class 1 home, what should the advisor look for under NCC DTS?",
+                    "expected_output": "Check NCC wet-area waterproofing evidence, AS 3740 references, penetrations, junctions, floor wastes, and inspection records; do not certify compliance without source evidence.",
                     "actual_output": "",
-                    "retrieval_context": [],
-                    "metadata": {"mode": "reference"},
+                    "retrieval_context": [
+                        "NCC Housing Provisions Part 10.2 covers wet area waterproofing and AS 3740 references."
+                    ],
+                    "metadata": {"mode": "reference", "category": "dts_waterproofing"},
                 },
             ]
             dataset_path.write_text("\n".join(json.dumps(row) for row in seed_rows) + "\n")
@@ -70,14 +75,14 @@ def run_regression(args):
             "failed": 0,
             "pass_rate": 1.0,
             "note": (
-                "Reference mode does not call a live LLM. Set LLMOPS_RUN_LIVE_EVALS=1 "
+                "Reference mode does not call a live LLM. Set BUILDSTAGE_RUN_LIVE_EVALS=1 "
                 "or use a production framework mode to run model-backed evaluation."
             ),
         }
         Path("reports").mkdir(exist_ok=True)
         Path("reports/eval_report.json").write_text(json.dumps(report, indent=2))
         print("Regression eval ran in deterministic reference mode.")
-        print("Set LLMOPS_RUN_LIVE_EVALS=1 for live model-backed evaluation.")
+        print("Set BUILDSTAGE_RUN_LIVE_EVALS=1 for live model-backed evaluation.")
         sys.exit(0)
 
     from tests.eval_suites.regression_eval import main as regression_main
@@ -119,14 +124,74 @@ def run_safety(args):
 
 
 def run_rag_retrieval(args):
-    decision = decide_stub("RAG retrieval eval", args.framework_mode)
-    if decision.allowed:
-        _write_stub_report("rag_retrieval", args, decision)
-        print(decision.reason)
-        print("Provide a vector store fixture or live index to promote this gate.")
-        sys.exit(0)
-    print(decision.reason)
-    sys.exit(2)
+    from model_development.evaluation.retrieval_eval import (
+        RetrievedEvidence,
+        evaluate_retrieval_samples,
+        load_retrieval_gold,
+        validate_gold_dataset,
+    )
+
+    dataset_path = Path(args.eval_dataset)
+    samples = load_retrieval_gold(dataset_path)
+    Path("reports").mkdir(exist_ok=True)
+
+    live_enabled = args.live_retrieval or os.getenv("BUILDSTAGE_RUN_LIVE_RETRIEVAL_EVALS")
+    if args.framework_mode == FrameworkMode.REFERENCE and not live_enabled:
+        report = validate_gold_dataset(samples)
+        report.update({
+            "provider": args.provider,
+            "framework_mode": args.framework_mode.value,
+            "dataset": str(dataset_path),
+            "note": (
+                "Reference mode validates the curated gold dataset only. "
+                "Pass --live-retrieval or set BUILDSTAGE_RUN_LIVE_RETRIEVAL_EVALS=1 "
+                "to query the indexed Qdrant collection."
+            ),
+        })
+        Path("reports/rag_retrieval_report.json").write_text(json.dumps(report, indent=2))
+        print("RAG retrieval eval validated the curated dataset in reference mode.")
+        print("Use --live-retrieval to query Qdrant.")
+        sys.exit(0 if report["failed"] == 0 else 1)
+
+    from config.settings import get_settings
+    from serving.rag.service import default_collection_name
+    from storage.vector_store.qdrant_store import QdrantVectorStore
+
+    settings = get_settings()
+    store = QdrantVectorStore(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+        collection_name=default_collection_name(),
+    )
+
+    def retrieve(query: str, filter_by: dict, top_k: int) -> list[RetrievedEvidence]:
+        return [
+            RetrievedEvidence(
+                document_id=result.document_id,
+                content=result.content,
+                score=result.score,
+                metadata=result.metadata,
+            )
+            for result in store.search(query, top_k=top_k, filter_by=filter_by or None)
+        ]
+
+    report = evaluate_retrieval_samples(
+        samples,
+        retrieve,
+        top_k=args.top_k,
+        filter_strategy=args.retrieval_filter_strategy,
+    )
+    report.update({
+        "provider": args.provider,
+        "framework_mode": args.framework_mode.value,
+        "dataset": str(dataset_path),
+        "gate_passing": report["recall_at_k"] >= args.min_recall_at_5,
+        "min_recall_at_k": args.min_recall_at_5,
+    })
+    Path("reports/rag_retrieval_report.json").write_text(json.dumps(report, indent=2))
+    print(f"RAG retrieval recall@{args.top_k}: {report['recall_at_k']:.1%}")
+    print(f"Gate: {'PASS' if report['gate_passing'] else 'FAIL'}")
+    sys.exit(0 if report["gate_passing"] else 1)
 
 
 def run_rag_e2e(args):
@@ -170,7 +235,7 @@ SUITES = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LLMOps eval runner")
+    parser = argparse.ArgumentParser(description="Build Stage Inspector Advisor eval runner")
     parser.add_argument("--suite", required=True, choices=list(SUITES.keys()))
     parser.add_argument("--provider", default="open_source",
                         choices=["open_source"])
@@ -178,6 +243,13 @@ def main():
     parser.add_argument("--mode", default="single", choices=["single", "multi"],
                         help="Agent mode (for --suite agent)")
     parser.add_argument("--min-pass-rate", type=float, default=0.90)
+    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--eval-dataset", default="data/eval_datasets/regression_golden.jsonl")
+    parser.add_argument("--live-retrieval", action="store_true",
+                        help="Run rag_retrieval against the indexed Qdrant collection")
+    parser.add_argument("--retrieval-filter-strategy", default="none",
+                        choices=["none", "domain", "strict"],
+                        help="Metadata filters to apply during live retrieval evals")
     parser.add_argument("--min-recall-at-5", type=float, default=0.80)
     parser.add_argument("--min-precision", type=float, default=0.75)
     parser.add_argument("--min-faithfulness", type=float, default=0.80)

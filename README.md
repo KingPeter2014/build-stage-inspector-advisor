@@ -44,6 +44,9 @@ governance/                   RBAC, audit logging, cost controls, CI/CD template
 providers/open_source/        OSS runtime adapter wiring
 config/                       App settings, LiteLLM config, Prometheus config
 docs/                         Architecture notes and use-case templates
+docs/domain_contract.md       Domain scope, stages, metadata filters, answer contract
+docs/evaluation_gold_data_design.md
+                              Victoria/NCC gold-data design and retrieval eval rules
 data/raw_docs/                Local document drop zone for ingestion
 tests/                        Unit, integration, eval, and smoke tests
 ```
@@ -104,6 +107,13 @@ Place source files in `data/raw_docs`, then run:
 python scripts/run_ingestion.py --source-dir data/raw_docs
 ```
 
+To ingest official Victoria web sources for contract stages, progress payments,
+mandatory inspections, and 7-star energy guidance:
+
+```bash
+python scripts/run_ingestion.py --source-type web --web-manifest data/web_sources/official_vic_sources.json
+```
+
 The ingestion pipeline is idempotent for a stable source URI. Each document gets
 a stable `document_id` plus a `document_hash`; each chunk gets a deterministic
 Qdrant point ID plus `chunk_id` and `chunk_hash` metadata. Before re-indexing a
@@ -113,19 +123,39 @@ runs replace the document instead of duplicating it.
 ### Run Evals
 
 ```bash
-python scripts/run_evals.py --suite regression --seed
+python scripts/run_evals.py --suite regression
 python scripts/run_evals.py --suite safety
 python scripts/run_evals.py --suite rag_retrieval
 ```
 
-Reference mode uses deterministic stubs for gates that do not yet have real
-project data, thresholds, and fixtures. Production modes require those stubs to
-be replaced.
+Reference mode keeps evaluation deterministic. `rag_retrieval` validates the
+curated Victoria/NCC gold dataset by default. After indexing documents into
+Qdrant, run the live retrieval gate:
+
+```bash
+python scripts/run_evals.py --suite rag_retrieval --live-retrieval --top-k 5
+```
+
+Use `--retrieval-filter-strategy domain` to apply stage/jurisdiction/building
+class filters during the retrieval gate. Use `strict` only after source metadata
+is consistently populated for document type and contract type.
 
 ### Start The Gateway
 
 ```bash
 uvicorn serving.gateway.app:app --port 4000
+```
+
+Run a smoke RAG query against the gateway:
+
+```bash
+python scripts/smoke_rag_query.py --api-url http://localhost:4000/v1/rag/query
+```
+
+Or query the local RAG pipeline directly:
+
+```bash
+python scripts/smoke_rag_query.py --local --inspection-stage waterproofing --jurisdiction VIC
 ```
 
 Or build the container:
@@ -156,18 +186,37 @@ Set `APP_COMPLEXITY` to control how strict the framework should be.
 
 | Mode | Purpose | Stub policy |
 |---|---|---|
-| `reference` | Local development, demos, docs, deterministic tests | Explicit stubs may pass and emit reports |
-| `starter-production` | Real data, auth, secrets, evals, observability | Stubs fail gates unless replaced |
+| `reference` | Framework demos and documentation only | Explicit stubs may pass and emit reports |
+| `starter-production` | Local MVP with real data, auth, secrets, evals, observability | Stubs fail gates unless replaced |
 | `regulated-production` | Stronger audit, PII controls, approvals, private networking | Stubs fail gates unless replaced |
+
+Use `APP_COMPLEXITY=starter-production` for the indexed-corpus development
+workflow. `reference` mode is only for deterministic framework demos where
+stubbed gates are acceptable.
+
+For `starter-production`, set `RAG_SECURITY_MODE=metadata_filtering` or a
+stricter ACL mode. `none` is reserved for low-risk reference demos.
 
 ## Next Adaptation Work
 
-The removal pass narrows the runtime target. The next project-planning pass
-should define the concrete domain contracts:
+The current Domain MVP pass narrows the runtime target and starts defining the
+concrete advisor contract. The next implementation work should harden and expand
+the advisor-specific behavior:
 
-- document metadata for regulations, standards, contracts, and project files
+- document metadata coverage for regulations, standards, contracts, and project files
 - source trust and citation policy for web-derived data
-- inspection-stage taxonomy
+- richer inspection-stage taxonomy and mappings from source metadata
 - RAG prompts for advisory answers with clause/source references
-- golden evals for building-stage advice and refusal behavior
+- golden evals for building-stage advice, conflict handling, and refusal behavior
 - access-control rules for private project and contract documents
+
+## Advisor Skills Under Test
+
+The current gold set and retrieval evals exercise these advisor skills:
+
+- stage inspection triage for Victorian domestic building work
+- NCC Deemed-to-Satisfy evidence lookup and citation
+- contract-stage and progress-payment distinction by contract type
+- 7-star energy compliance evidence handling
+- refusal when evidence is missing or a user asks for certification/legal conclusions
+- ACL-aware handling of private project and contract documents

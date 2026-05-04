@@ -2,7 +2,7 @@
 serving/gateway/app.py
 LiteLLM-powered LLM gateway with:
   - Two-level semantic response cache (exact + similarity)
-  - Runtime policy enforcement: rate limit → RBAC → input guardrails → budget → output guardrails
+  - Runtime policy enforcement: rate limit -> RBAC -> input guardrails -> budget -> output guardrails
   - Tamper-evident audit logging
   - OpenTelemetry tracing + Prometheus metrics
 Run: uvicorn serving.gateway.app:app --port 4000
@@ -32,7 +32,7 @@ from serving.cache.semantic_cache import SemanticCache
 from serving.gateway.policy import PolicyContext, get_policy_context
 
 log = structlog.get_logger()
-app = FastAPI(title="LLMOps Gateway", version="1.0.0")
+app = FastAPI(title="Build Stage Inspector Advisor Gateway", version="1.0.0")
 tracer = get_tracer("gateway")
 
 # Semantic cache: exact-match + cosine-similarity fallback, 1-hour TTL
@@ -43,7 +43,7 @@ _cache = SemanticCache(
 )
 
 
-# ── Request / Response models ──────────────────────────────────────────────────
+# Request / response models
 
 class ChatMessage(BaseModel):
     role: str
@@ -81,7 +81,7 @@ def get_agent_runner():
     return OSSAgentRunner()
 
 
-# ── Health check ───────────────────────────────────────────────────────────────
+# Health check
 
 @app.get("/health")
 async def health():
@@ -184,7 +184,7 @@ async def agent_run(
             raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Chat completion endpoint ───────────────────────────────────────────────────
+# Chat completion endpoint
 
 @app.post("/v1/chat/completions", response_model=ChatResponse)
 async def chat_completions(
@@ -198,19 +198,19 @@ async def chat_completions(
         span.set_attribute("user_id", ctx.user.id)
         span.set_attribute("team_id", ctx.user.team_id)
 
-        # ── 1. Rate limiting ───────────────────────────────────────────────────
+        # 1. Rate limiting
         ctx.enforce_rate_limit()
 
-        # ── 2. RBAC ───────────────────────────────────────────────────────────
+        # 2. RBAC
         ctx.enforce_permission("chat:completion", req.model)
 
-        # ── 3. Input guardrails ───────────────────────────────────────────────
+        # 3. Input guardrails
         last_user_msg = next(
             (m.content for m in reversed(req.messages) if m.role == "user"), ""
         )
         ctx.check_input(last_user_msg)
 
-        # ── 4. Semantic cache lookup ──────────────────────────────────────────
+        # 4. Semantic cache lookup
         cache_key = f"{req.model}::{last_user_msg}"
         cached_response = _cache.get(cache_key)
         if cached_response:
@@ -225,14 +225,14 @@ async def chat_completions(
                 cached=True,
             )
 
-        # ── 5. Budget gate (conservative pre-check) ───────────────────────────
-        # Rough estimate: 1 token ≈ $0.000002 for gpt-4o; gates runaway spend
+        # 5. Budget gate (conservative pre-check)
+        # Rough estimate: 1 token ~= $0.000002 for gpt-4o; gates runaway spend
         estimated_tokens = sum(len(m.content.split()) * 1.3 for m in req.messages) + req.max_tokens
         estimated_cost = estimated_tokens * 0.000002
         ctx.enforce_budget(estimated_cost)
 
         try:
-            # ── 6. LLM call ───────────────────────────────────────────────────
+            # 6. LLM call
             messages = [m.model_dump() for m in req.messages]
             response = await acompletion(
                 model=req.model,
@@ -246,14 +246,14 @@ async def chat_completions(
             actual_cost = litellm.completion_cost(completion_response=response)
             output_text = response.choices[0].message.content or ""
 
-            # ── 7. Output guardrails (sanitise, never block) ──────────────────
+            # 7. Output guardrails (sanitise, never block)
             output_result = ctx.check_output(output_text)
             safe_output = output_result.sanitised_text or output_text
 
-            # ── 8. Store in semantic cache ────────────────────────────────────
+            # 8. Store in semantic cache
             _cache.set(cache_key, safe_output)
 
-            # ── 9. Record actual cost ─────────────────────────────────────────
+            # 9. Record actual cost
             ctx.record_cost(
                 model=req.model,
                 prompt_tokens=usage.prompt_tokens,
@@ -261,7 +261,7 @@ async def chat_completions(
                 cost_usd=actual_cost,
             )
 
-            # ── 10. Audit log ─────────────────────────────────────────────────
+            # 10. Audit log
             ctx.audit(
                 action="chat_completion",
                 model=req.model,
@@ -274,7 +274,7 @@ async def chat_completions(
                 estimated_cost_usd=actual_cost,
             )
 
-            # ── Metrics ───────────────────────────────────────────────────────
+            # Metrics
             request_counter.labels(model=req.model, team=ctx.user.team_id, status="success").inc()
             token_counter.labels(model=req.model, token_type="prompt").inc(usage.prompt_tokens)
             token_counter.labels(model=req.model, token_type="completion").inc(usage.completion_tokens)

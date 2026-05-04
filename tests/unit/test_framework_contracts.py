@@ -1,6 +1,6 @@
 import pytest
 
-from core.framework import FrameworkMode, decide_stub, get_framework_mode, require_env_vars
+from core.framework import FrameworkMode, decide_stub, get_config_value, get_framework_mode, require_env_vars
 from core.rag import (
     RAG_CAPABILITY_MATRIX,
     RAGOptions,
@@ -27,6 +27,19 @@ def test_production_mode_blocks_stubs(monkeypatch):
     decision = decide_stub("rag eval")
     assert decision.allowed is False
     assert "starter-production" in decision.reason
+
+
+def test_config_value_reads_env_files_without_overriding_process_env(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("APP_COMPLEXITY=reference\n")
+    (tmp_path / ".env.development").write_text("APP_COMPLEXITY=starter-production\n")
+
+    monkeypatch.delenv("APP_COMPLEXITY", raising=False)
+    assert get_config_value("APP_COMPLEXITY") == "starter-production"
+    assert get_framework_mode() is FrameworkMode.STARTER_PRODUCTION
+
+    monkeypatch.setenv("APP_COMPLEXITY", "reference")
+    assert get_config_value("APP_COMPLEXITY") == "reference"
 
 
 def test_require_env_vars_reports_missing(monkeypatch):

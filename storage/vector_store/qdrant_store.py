@@ -16,6 +16,7 @@ from qdrant_client.models import (
     FieldCondition,
     MatchValue,
     MatchAny,
+    PayloadSchemaType,
 )
 from sentence_transformers import SentenceTransformer
 
@@ -32,6 +33,30 @@ class SearchResult:
 
 
 class QdrantVectorStore:
+    KEYWORD_INDEX_FIELDS = (
+        "document_id",
+        "chunk_id",
+        "document_type",
+        "source_type",
+        "source_uri",
+        "source_title",
+        "source_version",
+        "document_family",
+        "jurisdiction",
+        "section",
+        "clause",
+        "volume",
+        "building_class",
+        "inspection_stage",
+        "project_id",
+        "contract_id",
+        "tenant_id",
+        "acl_user_ids",
+        "acl_group_ids",
+        "trust_level",
+        "tags",
+    )
+
     def __init__(
         self,
         url: str = "http://localhost:6333",
@@ -45,6 +70,7 @@ class QdrantVectorStore:
         self.embedder = SentenceTransformer(embedding_model)
         self.vector_size = vector_size
         self._ensure_collection()
+        self._ensure_payload_indexes()
 
     def _ensure_collection(self) -> None:
         existing = [c.name for c in self.client.get_collections().collections]
@@ -52,6 +78,26 @@ class QdrantVectorStore:
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
+            )
+
+    def _ensure_payload_indexes(self) -> None:
+        """
+        Qdrant Cloud requires payload indexes for fields used in filters.
+
+        Ingestion deletes existing chunks by document_id before re-indexing, so
+        document_id must be indexed before the first filtered delete. The other
+        indexes cover the domain metadata and ACL filters used by RAG queries.
+        """
+        collection = self.client.get_collection(self.collection_name)
+        existing_indexes = set((collection.payload_schema or {}).keys())
+        for field_name in self.KEYWORD_INDEX_FIELDS:
+            if field_name in existing_indexes:
+                continue
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name=field_name,
+                field_schema=PayloadSchemaType.KEYWORD,
+                wait=True,
             )
 
     def upsert_chunks(self, chunks: list[Chunk]) -> None:
@@ -83,13 +129,7 @@ class QdrantVectorStore:
         qdrant_filter = None
         if filter_by:
             qdrant_filter = Filter(must=self._build_conditions(filter_by))
-        results = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=query_vector,
-            limit=top_k,
-            query_filter=qdrant_filter,
-            with_payload=True,
-        )
+        results = self._search_points(query_vector, top_k, qdrant_filter)
         return [
             SearchResult(
                 chunk_id=str(r.id),
@@ -100,6 +140,30 @@ class QdrantVectorStore:
             )
             for r in results
         ]
+
+    def _search_points(
+        self,
+        query_vector: list[float],
+        top_k: int,
+        qdrant_filter: Filter | None,
+    ) -> list[Any]:
+        if hasattr(self.client, "search"):
+            return self.client.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                limit=top_k,
+                query_filter=qdrant_filter,
+                with_payload=True,
+            )
+
+        response = self.client.query_points(
+            collection_name=self.collection_name,
+            query=query_vector,
+            limit=top_k,
+            query_filter=qdrant_filter,
+            with_payload=True,
+        )
+        return list(getattr(response, "points", response))
 
     @staticmethod
     def _build_conditions(filter_by: dict[str, Any]) -> list[FieldCondition]:

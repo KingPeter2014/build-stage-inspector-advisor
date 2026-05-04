@@ -85,6 +85,10 @@ Primary ingestion starts from `data/raw_docs`. Future source connectors should
 preserve the same downstream contract and add metadata needed for citations,
 filtering, trust scoring, and ACL checks.
 
+The v1 domain contract is documented in `docs/domain_contract.md`. The initial
+advisor scope is Australian construction-stage inspection advice, with NCC and
+other regulation material as the first authoritative corpus.
+
 Recommended document metadata:
 
 ```text
@@ -97,6 +101,17 @@ acl_user_ids, acl_group_ids, trust_level, tags
 Use `document_type` to keep heterogeneous corpora filterable. Initial values are
 `regulation`, `contract`, `policy`, `legal`, `standard`, `guidance`, `report`,
 `web`, and `other`.
+
+Recommended `inspection_stage` values are `site_prep`, `slab`, `frame`,
+`lockup`, `waterproofing`, `fixing`, `practical_completion`, `handover`, and
+`other`.
+
+The public RAG API keeps all domain metadata constraints in `filter_by`.
+Supported v1 filter keys are `document_type`, `inspection_stage`,
+`jurisdiction`, `building_class`, `tenant_id`, `project_id`, `contract_id`,
+`document_family`, `source_version`, `trust_level`, and `tags`. ACL constraints
+belong in `acl_filter` using `acl_user_ids`, `acl_group_ids`, `tenant_id`, or
+`document_id`.
 
 ## Storage And Retrieval
 
@@ -155,6 +170,7 @@ Key API paths:
 ```text
 GET  /health
 POST /v1/chat/completions
+POST /v1/rag/query
 POST /v1/agents/run
 ```
 
@@ -191,6 +207,14 @@ Keep these gates before production:
 - Safety evals and regression evals
 - ACL leakage tests for private corpora
 - Human review before prompt/model changes promote
+
+## Advisor Answer Contract
+
+RAG answers must use only retrieved context and cite material sources with
+`source_title` plus `clause`, `section`, or `volume` when available. The advisor
+should distinguish regulation, standard, contract, project, and web evidence
+when metadata is present, call out source conflicts, and say "I don't know based
+on the provided sources" when evidence is missing.
 
 ## Local Development
 

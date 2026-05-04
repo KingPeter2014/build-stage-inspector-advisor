@@ -54,7 +54,7 @@ class CostManager:
         return records
 
     def daily_spend(self, team_id: str, on_date: date | None = None) -> float:
-        target = (on_date or date.today()).isoformat()
+        target = (on_date or datetime.utcnow().date()).isoformat()
         return sum(
             r.cost_usd for r in self._load_records()
             if r.team_id == team_id and r.timestamp.startswith(target)
