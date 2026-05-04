@@ -2,7 +2,7 @@
 serving/gateway/app.py
 LiteLLM-powered LLM gateway with:
   - Two-level semantic response cache (exact + similarity)
-  - Runtime policy enforcement: rate limit → RBAC → input guardrails → budget → output guardrails
+  - Runtime policy enforcement: rate limit -> RBAC -> input guardrails -> budget -> output guardrails
   - Tamper-evident audit logging
   - OpenTelemetry tracing + Prometheus metrics
 Run: uvicorn serving.gateway.app:app --port 4000
@@ -18,6 +18,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from litellm import acompletion
 from pydantic import BaseModel
 
+from core.interfaces.agent_runner import AgentInput as RunnerAgentInput, AgentMode
+from core.schemas.agent import AgentInput as AgentRunRequest
+from core.schemas.agent import AgentOutput as AgentRunResponse
+from core.schemas.rag import RAGQueryRequest, RAGQueryResponse
 from observability.metrics.prometheus_metrics import (
     latency_histogram,
     request_counter,
@@ -28,7 +32,7 @@ from serving.cache.semantic_cache import SemanticCache
 from serving.gateway.policy import PolicyContext, get_policy_context
 
 log = structlog.get_logger()
-app = FastAPI(title="LLMOps Gateway", version="1.0.0")
+app = FastAPI(title="Build Stage Inspector Advisor Gateway", version="1.0.0")
 tracer = get_tracer("gateway")
 
 # Semantic cache: exact-match + cosine-similarity fallback, 1-hour TTL
@@ -39,7 +43,7 @@ _cache = SemanticCache(
 )
 
 
-# ── Request / Response models ──────────────────────────────────────────────────
+# Request / response models
 
 class ChatMessage(BaseModel):
     role: str
@@ -71,14 +75,116 @@ class ChatResponse(BaseModel):
     cached: bool = False
 
 
-# ── Health check ───────────────────────────────────────────────────────────────
+def get_agent_runner():
+    from providers.open_source.serving.agents import OSSAgentRunner
+
+    return OSSAgentRunner()
+
+
+# Health check
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "cache_size": _cache.size}
 
 
-# ── Chat completion endpoint ───────────────────────────────────────────────────
+@app.post("/v1/rag/query", response_model=RAGQueryResponse)
+async def rag_query(
+    req: RAGQueryRequest,
+    ctx: PolicyContext = Depends(get_policy_context),
+):
+    start = time.perf_counter()
+
+    with tracer.start_as_current_span("rag_query_endpoint") as span:
+        span.set_attribute("user_id", ctx.user.id)
+        span.set_attribute("team_id", ctx.user.team_id)
+        span.set_attribute("top_k", req.top_k)
+
+        ctx.enforce_rate_limit()
+        ctx.enforce_permission("rag:query", "rag")
+        ctx.check_input(req.question)
+
+        try:
+            from serving.rag.service import query_knowledge_base_local
+
+            response = query_knowledge_base_local(req)
+            output_result = ctx.check_output(response.answer)
+            response.answer = output_result.sanitised_text or response.answer
+
+            ctx.audit(
+                action="rag_query",
+                model=response.model or "rag",
+                input_text=req.question,
+                output_text=response.answer,
+                guardrail_result=output_result,
+                latency_seconds=round(time.perf_counter() - start, 4),
+                retrieved_sources=len(response.sources),
+            )
+            return response
+        except HTTPException:
+            raise
+        except Exception as e:
+            span.record_exception(e)
+            log.error("rag_query_error", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/agents/run", response_model=AgentRunResponse)
+async def agent_run(
+    req: AgentRunRequest,
+    ctx: PolicyContext = Depends(get_policy_context),
+    runner=Depends(get_agent_runner),
+):
+    start = time.perf_counter()
+
+    with tracer.start_as_current_span("agent_run") as span:
+        span.set_attribute("user_id", ctx.user.id)
+        span.set_attribute("team_id", ctx.user.team_id)
+        span.set_attribute("agent_mode", req.mode)
+
+        ctx.enforce_rate_limit()
+        ctx.enforce_permission("agent:run", "agent")
+        ctx.check_input(req.message)
+
+        mode = AgentMode.MULTI if req.mode == AgentMode.MULTI.value else AgentMode.SINGLE
+        try:
+            result = runner.run(RunnerAgentInput(
+                message=req.message,
+                session_id=req.session_id,
+                context=req.context,
+                mode=mode,
+            ))
+            output_result = ctx.check_output(result.response)
+            safe_response = output_result.sanitised_text or result.response
+
+            ctx.audit(
+                action="agent_run",
+                model="agent",
+                input_text=req.message,
+                output_text=safe_response,
+                guardrail_result=output_result,
+                latency_seconds=round(time.perf_counter() - start, 4),
+                mode=mode.value,
+            )
+
+            return AgentRunResponse(
+                response=safe_response,
+                session_id=result.session_id,
+                tool_calls=result.tool_calls,
+                iterations=result.iterations,
+                blocked=result.blocked,
+                block_reason=result.block_reason,
+                provider=result.provider,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            span.record_exception(e)
+            log.error("agent_run_error", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+# Chat completion endpoint
 
 @app.post("/v1/chat/completions", response_model=ChatResponse)
 async def chat_completions(
@@ -92,19 +198,19 @@ async def chat_completions(
         span.set_attribute("user_id", ctx.user.id)
         span.set_attribute("team_id", ctx.user.team_id)
 
-        # ── 1. Rate limiting ───────────────────────────────────────────────────
+        # 1. Rate limiting
         ctx.enforce_rate_limit()
 
-        # ── 2. RBAC ───────────────────────────────────────────────────────────
+        # 2. RBAC
         ctx.enforce_permission("chat:completion", req.model)
 
-        # ── 3. Input guardrails ───────────────────────────────────────────────
+        # 3. Input guardrails
         last_user_msg = next(
             (m.content for m in reversed(req.messages) if m.role == "user"), ""
         )
-        input_result = ctx.check_input(last_user_msg)
+        ctx.check_input(last_user_msg)
 
-        # ── 4. Semantic cache lookup ──────────────────────────────────────────
+        # 4. Semantic cache lookup
         cache_key = f"{req.model}::{last_user_msg}"
         cached_response = _cache.get(cache_key)
         if cached_response:
@@ -119,14 +225,14 @@ async def chat_completions(
                 cached=True,
             )
 
-        # ── 5. Budget gate (conservative pre-check) ───────────────────────────
-        # Rough estimate: 1 token ≈ $0.000002 for gpt-4o; gates runaway spend
+        # 5. Budget gate (conservative pre-check)
+        # Rough estimate: 1 token ~= $0.000002 for gpt-4o; gates runaway spend
         estimated_tokens = sum(len(m.content.split()) * 1.3 for m in req.messages) + req.max_tokens
         estimated_cost = estimated_tokens * 0.000002
         ctx.enforce_budget(estimated_cost)
 
         try:
-            # ── 6. LLM call ───────────────────────────────────────────────────
+            # 6. LLM call
             messages = [m.model_dump() for m in req.messages]
             response = await acompletion(
                 model=req.model,
@@ -140,14 +246,14 @@ async def chat_completions(
             actual_cost = litellm.completion_cost(completion_response=response)
             output_text = response.choices[0].message.content or ""
 
-            # ── 7. Output guardrails (sanitise, never block) ──────────────────
+            # 7. Output guardrails (sanitise, never block)
             output_result = ctx.check_output(output_text)
             safe_output = output_result.sanitised_text or output_text
 
-            # ── 8. Store in semantic cache ────────────────────────────────────
+            # 8. Store in semantic cache
             _cache.set(cache_key, safe_output)
 
-            # ── 9. Record actual cost ─────────────────────────────────────────
+            # 9. Record actual cost
             ctx.record_cost(
                 model=req.model,
                 prompt_tokens=usage.prompt_tokens,
@@ -155,7 +261,7 @@ async def chat_completions(
                 cost_usd=actual_cost,
             )
 
-            # ── 10. Audit log ─────────────────────────────────────────────────
+            # 10. Audit log
             ctx.audit(
                 action="chat_completion",
                 model=req.model,
@@ -168,7 +274,7 @@ async def chat_completions(
                 estimated_cost_usd=actual_cost,
             )
 
-            # ── Metrics ───────────────────────────────────────────────────────
+            # Metrics
             request_counter.labels(model=req.model, team=ctx.user.team_id, status="success").inc()
             token_counter.labels(model=req.model, token_type="prompt").inc(usage.prompt_tokens)
             token_counter.labels(model=req.model, token_type="completion").inc(usage.completion_tokens)

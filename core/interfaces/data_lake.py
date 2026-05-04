@@ -19,7 +19,7 @@ class LakeObject:
 class AbstractDataLake(ABC):
     """
     Uniform interface for object-store data lakes.
-    Implementations: S3/MinIO (OSS), Azure Blob/ADLS Gen2, Amazon S3, Google Cloud Storage.
+    Implementation: S3-compatible object storage such as MinIO or LocalStack.
     """
 
     @abstractmethod

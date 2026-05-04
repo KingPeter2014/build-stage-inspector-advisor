@@ -7,7 +7,6 @@ Skip with: pytest -m "not integration"
 import pytest
 from unittest.mock import MagicMock, patch
 
-from data_ingestion.chunking.chunker import Chunk, TokenChunker
 from storage.prompt_registry.registry import LocalPromptRegistry
 
 

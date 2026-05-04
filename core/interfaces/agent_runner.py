@@ -37,11 +37,7 @@ class AgentOutput:
 class AbstractAgentRunner(ABC):
     """
     Uniform interface for agent execution.
-    Implementations:
-      - OSS: LangGraph ReAct (single) + CrewAI / LangGraph Supervisor (multi)
-      - Azure: Azure AI Foundry Agents
-      - AWS: AWS AgentCore (Bedrock Agents)
-      - GCP: Vertex AI Agent Engine
+    Implementation: LangGraph ReAct (single) + CrewAI / LangGraph Supervisor (multi).
     """
 
     @abstractmethod

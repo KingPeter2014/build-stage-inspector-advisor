@@ -32,8 +32,9 @@ class AgentState(TypedDict):
 @tool
 def search_knowledge_base(query: str) -> str:
     """Search the internal knowledge base for relevant information."""
-    # Wire to your QdrantVectorStore in production
-    return f"[Knowledge base result for: {query}]"
+    from serving.rag.service import search_knowledge_base_text
+
+    return search_knowledge_base_text(query=query)
 
 
 @tool

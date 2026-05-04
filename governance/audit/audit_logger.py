@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -48,7 +49,7 @@ class AuditEntry:
     guardrail_type: str = ""
 
     # Integrity
-    entry_hash: str = ""            # SHA-256 of the rest of the record — set last
+    entry_hash: str = ""            # SHA-256 of the rest of the record, set last
 
     def finalise(self) -> "AuditEntry":
         """Compute the integrity hash over all other fields."""
@@ -68,7 +69,12 @@ class AuditEntry:
 
 @dataclass
 class AuditConfig:
-    log_path: str = "data/audit/audit.jsonl"
+    log_path: str = field(
+        default_factory=lambda: os.getenv(
+            "BUILDSTAGE_AUDIT_LOG_PATH",
+            "artifacts/audit/audit.jsonl",
+        )
+    )
     store_full_content: bool = False    # Set False for HIPAA environments
     redact_pii: bool = True
     retention_days: int = 365           # HIPAA minimum: 6 years

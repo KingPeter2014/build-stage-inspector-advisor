@@ -16,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def get_error_rate(prometheus_url: str, model: str = "all") -> float:
     """Query Prometheus for the current error rate."""
-    import urllib.request, json, urllib.parse
+    import urllib.request
+    import json
+    import urllib.parse
 
     query = 'sum(rate(llmops_requests_total{status="error"}[2m])) / sum(rate(llmops_requests_total[2m]))'
     encoded = urllib.parse.quote(query)

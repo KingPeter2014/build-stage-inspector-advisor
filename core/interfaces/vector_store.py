@@ -21,7 +21,7 @@ class VectorSearchResult:
 class AbstractVectorStore(ABC):
     """
     Uniform interface for all vector store backends.
-    Implementations: Qdrant (OSS), Azure AI Search, Amazon OpenSearch, Vertex AI Vector Search.
+    Implementation: Qdrant.
     """
 
     @abstractmethod

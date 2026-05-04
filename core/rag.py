@@ -1,19 +1,16 @@
 """
-Provider-neutral RAG configuration and capability metadata.
+RAG configuration and capability metadata.
 
-RAG implementations vary widely by platform. The framework captures the desired
-retrieval and security posture here, while provider adapters decide how to
-implement it with Azure AI Search, OpenSearch, Vertex Vector Search, Qdrant,
-or an optional graph database.
+The runtime target is open source. Retrieval still supports optional extensions
+such as hybrid search, graph augmentation, reranking, and ACL-aware filters.
 """
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from core.framework import FrameworkMode, get_framework_mode
+from core.framework import FrameworkMode, get_config_value, get_framework_mode
 
 
 class RAGRetrievalMode(str, Enum):
@@ -49,10 +46,10 @@ class RAGOptions:
     @classmethod
     def from_env(cls) -> "RAGOptions":
         return cls(
-            retrieval_mode=RAGRetrievalMode(os.getenv("RAG_RETRIEVAL_MODE", "vector")),
-            security_mode=RAGSecurityMode(os.getenv("RAG_SECURITY_MODE", "none")),
-            graph_enabled=os.getenv("GRAPH_ENABLED", "false").lower() in ("1", "true", "yes"),
-            reranker_enabled=os.getenv("RERANKER_ENABLED", "false").lower() in ("1", "true", "yes"),
+            retrieval_mode=RAGRetrievalMode(get_config_value("RAG_RETRIEVAL_MODE", "vector")),
+            security_mode=RAGSecurityMode(get_config_value("RAG_SECURITY_MODE", "none")),
+            graph_enabled=get_config_value("GRAPH_ENABLED", "false").lower() in ("1", "true", "yes"),
+            reranker_enabled=get_config_value("RERANKER_ENABLED", "false").lower() in ("1", "true", "yes"),
             framework_mode=get_framework_mode(),
         )
 
@@ -84,38 +81,11 @@ RAG_CAPABILITY_MATRIX: dict[str, ProviderRAGCapability] = {
     "open_source": ProviderRAGCapability(
         provider="open_source",
         vector="implemented: Qdrant",
-        hybrid="external option: OpenSearch/Elasticsearch or Qdrant hybrid configuration",
+        hybrid="external option: Qdrant hybrid configuration or an OSS keyword backend",
         graph="external option: Neo4j, ArangoDB, or Memgraph adapter",
         metadata_filtering="implemented via vector-store filters where supported",
         acl_filtering="framework option: pre-retrieval metadata/ACL filters required for secure apps",
         reranking="external option: cross-encoder or managed reranker",
-    ),
-    "azure": ProviderRAGCapability(
-        provider="azure",
-        vector="implemented: Azure AI Search vector search",
-        hybrid="implemented: Azure AI Search hybrid keyword + vector",
-        graph="external option: Cosmos DB Gremlin, Neo4j, or Azure SQL graph patterns",
-        metadata_filtering="implemented via Azure AI Search filters",
-        acl_filtering="framework option: Entra/user/group ACL fields filtered during retrieval",
-        reranking="external option: Azure AI Search semantic ranker or custom reranker",
-    ),
-    "aws": ProviderRAGCapability(
-        provider="aws",
-        vector="implemented: OpenSearch k-NN",
-        hybrid="implemented/external: OpenSearch BM25 + k-NN query composition",
-        graph="external option: Amazon Neptune or managed graph adapter",
-        metadata_filtering="implemented via OpenSearch filters",
-        acl_filtering="framework option: Cognito/IAM/app ACL fields filtered during retrieval",
-        reranking="external option: Bedrock rerank model or custom reranker",
-    ),
-    "gcp": ProviderRAGCapability(
-        provider="gcp",
-        vector="implemented: Vertex AI Vector Search",
-        hybrid="external option: pair Vertex Vector Search with keyword index/BigQuery search",
-        graph="external option: Neo4j, Spanner Graph, or graph adapter",
-        metadata_filtering="implemented where vector restricts are available",
-        acl_filtering="framework option: IAP/IAM/app ACL fields filtered during retrieval",
-        reranking="external option: Vertex/Model Garden or custom reranker",
     ),
 }
 
@@ -130,8 +100,8 @@ def build_acl_filter(
     """
     Build a provider-neutral ACL filter payload.
 
-    Provider adapters may translate this into OData, OpenSearch bool filters,
-    Vertex restricts, Qdrant filters, or graph traversal constraints.
+    Retrieval adapters may translate this into Qdrant filters, keyword-backend
+    filters, object metadata constraints, or graph traversal constraints.
     """
     acl: dict[str, Any] = {}
     if user_id:

@@ -1,18 +1,11 @@
-# docker-compose.test.yml
 # Lightweight service stack for integration tests and CI pipelines.
-# Intentionally minimal — only services needed for tests, not the full dev stack.
 #
 # Usage:
 #   docker compose -f docker-compose.test.yml up -d
 #   APP_ENV=development LLMOPS_LOCALSTACK_URL=http://localhost:4566 pytest -m integration
 #   docker compose -f docker-compose.test.yml down -v
-#
-# This file does NOT replace docker-compose.yml (the full development stack).
-# Port mapping matches the defaults expected by tests/conftest.py fixtures.
 
 services:
-
-  # ── Qdrant (vector store for OSS integration tests) ──────────────────────────
   qdrant:
     image: qdrant/qdrant:v1.9.2
     ports:
@@ -20,7 +13,7 @@ services:
     environment:
       QDRANT__SERVICE__GRPC_PORT: "6334"
     tmpfs:
-      - /qdrant/storage   # in-memory for tests — data is ephemeral
+      - /qdrant/storage
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:6333/health"]
       interval: 5s
@@ -28,7 +21,6 @@ services:
       retries: 10
       start_period: 5s
 
-  # ── Redis (semantic cache + rate limiter) ─────────────────────────────────────
   redis:
     image: redis:7.2-alpine
     ports:
@@ -40,16 +32,16 @@ services:
       timeout: 3s
       retries: 10
 
-  # ── LocalStack (mocks AWS S3, SecretsManager, Bedrock stubs) ─────────────────
+  # LocalStack is retained as an S3-compatible object-storage test endpoint.
+  # It is a source/storage test double, not a deployment target.
   localstack:
     image: localstack/localstack:3.4
     ports:
-      - "4566:4566"    # unified endpoint
+      - "4566:4566"
     environment:
       SERVICES: s3,secretsmanager,sts
       DEFAULT_REGION: us-east-1
       EAGER_SERVICE_LOADING: 1
-      # Disable persistence — tests always start with a clean state
       PERSISTENCE: 0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -60,7 +52,6 @@ services:
       retries: 15
       start_period: 10s
 
-  # ── LocalStack bootstrap (creates test buckets + secrets after startup) ───────
   localstack-init:
     image: amazon/aws-cli:2.15.57
     depends_on:
@@ -81,7 +72,7 @@ services:
       "
     restart: "no"
 
-  # ── WireMock (stubs for Azure OpenAI, Bedrock, Vertex AI HTTP calls) ──────────
+  # WireMock can stub external HTTP APIs for future source or LLM tests.
   wiremock:
     image: wiremock/wiremock:3.5.4
     ports:
@@ -96,5 +87,3 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
-
-# No named volumes — all storage is ephemeral for test isolation

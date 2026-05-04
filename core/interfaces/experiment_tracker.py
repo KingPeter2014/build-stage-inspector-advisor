@@ -12,7 +12,7 @@ from typing import Any, Generator
 class AbstractExperimentTracker(ABC):
     """
     Uniform interface for ML experiment tracking.
-    Implementations: MLflow/W&B (OSS), Azure ML Experiments, SageMaker Experiments, Vertex AI Experiments.
+    Implementation: MLflow and optional W&B.
     """
 
     @abstractmethod

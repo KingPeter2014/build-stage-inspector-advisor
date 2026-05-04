@@ -3,13 +3,15 @@ tests/unit/test_core_modules.py
 Unit tests for: cleaner, prompt registry, RBAC, cost manager, audit logger.
 """
 import pytest
-import tempfile
-import os
-from datetime import date
 
-# ── Cleaner ────────────────────────────────────────────────────────────────────
 from data_ingestion.etl.cleaner import DocumentCleaner, clean_text, detect_and_redact_pii
 from data_ingestion.sources.base import RawDocument
+from governance.access_control.rbac import AccessDenied, RBACEnforcer, Role, User
+from governance.audit.audit_logger import AuditConfig, AuditLogger
+from governance.cost.cost_manager import BudgetPolicy, CostManager, CostRecord
+from storage.prompt_registry.registry import LocalPromptRegistry, PromptVersion
+
+# ── Cleaner ────────────────────────────────────────────────────────────────────
 
 
 class TestCleaner:
@@ -45,14 +47,13 @@ class TestCleaner:
 
 
 # ── Prompt Registry ────────────────────────────────────────────────────────────
-from storage.prompt_registry.registry import LocalPromptRegistry, PromptVersion
 
 
 class TestPromptRegistry:
     def test_push_and_get_latest(self, tmp_path):
         registry = LocalPromptRegistry(str(tmp_path / "prompts.json"))
         pv = PromptVersion(name="test_prompt", version=0, template="Hello {{ name }}")
-        pushed = registry.push(pv)
+        registry.push(pv)
         retrieved = registry.get("test_prompt")
         assert retrieved.template == "Hello {{ name }}"
         assert retrieved.version == 1
@@ -77,7 +78,6 @@ class TestPromptRegistry:
 
 
 # ── RBAC ───────────────────────────────────────────────────────────────────────
-from governance.access_control.rbac import RBACEnforcer, User, Role, AccessDenied
 
 
 class TestRBAC:
@@ -113,7 +113,6 @@ class TestRBAC:
 
 
 # ── Cost Manager ───────────────────────────────────────────────────────────────
-from governance.cost.cost_manager import CostManager, CostRecord, BudgetPolicy
 
 
 class TestCostManager:
@@ -143,7 +142,6 @@ class TestCostManager:
 
 
 # ── Audit Logger ───────────────────────────────────────────────────────────────
-from governance.audit.audit_logger import AuditLogger, AuditConfig
 
 
 class TestAuditLogger:
@@ -168,5 +166,4 @@ class TestAuditLogger:
         from governance.audit.audit_logger import AuditEntry
         entry = AuditEntry(action="test", model="gpt-4o", user_id="u1")
         entry.finalise()
-        original_hash = entry.entry_hash
         assert entry.verify() is True

@@ -20,7 +20,7 @@ class FeatureVector:
 class AbstractFeatureStore(ABC):
     """
     Uniform interface for feature stores.
-    Implementations: Feast (OSS), Azure ML Feature Store, SageMaker Feature Store, Vertex AI Feature Store.
+    Implementation: Feast.
     """
 
     @abstractmethod

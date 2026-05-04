@@ -21,6 +21,7 @@ class Role(str, Enum):
 # Permission → minimum required role
 PERMISSIONS: dict[str, Role] = {
     "chat:completion":        Role.VIEWER,
+    "agent:run":              Role.VIEWER,
     "rag:query":              Role.VIEWER,
     "prompt:read":            Role.VIEWER,
     "prompt:write":           Role.DEVELOPER,

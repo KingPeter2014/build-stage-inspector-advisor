@@ -2,7 +2,6 @@
 data_ingestion/sources/file_connector.py
 Ingests PDFs, HTML, Markdown, and plain text files from a directory or S3.
 """
-import hashlib
 from pathlib import Path
 from typing import Iterator
 
@@ -11,6 +10,7 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
 from data_ingestion.sources.base import BaseSourceConnector, RawDocument
+from data_ingestion.identity import stable_document_id
 
 
 class LocalFileConnector(BaseSourceConnector):
@@ -30,7 +30,7 @@ class LocalFileConnector(BaseSourceConnector):
             if not content.strip():
                 continue
             yield RawDocument(
-                id=hashlib.md5(str(path).encode()).hexdigest(),
+                id=stable_document_id(str(path)),
                 content=content,
                 source=str(path),
                 source_type="unstructured",
@@ -63,7 +63,8 @@ class S3FileConnector(BaseSourceConnector):
             return False
 
     def fetch(self, **kwargs) -> Iterator[RawDocument]:
-        import tempfile, os
+        import tempfile
+        import os
         paginator = self._s3.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self.bucket, Prefix=self.prefix):
             for obj in page.get("Contents", []):
@@ -77,5 +78,6 @@ class S3FileConnector(BaseSourceConnector):
                     os.unlink(tmp.name)
                 for doc in docs:
                     doc.source = f"s3://{self.bucket}/{key}"
+                    doc.id = stable_document_id(doc.source)
                     doc.metadata["s3_key"] = key
                     yield doc

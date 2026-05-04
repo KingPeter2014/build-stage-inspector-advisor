@@ -26,7 +26,7 @@ class AbstractSpan(ABC):
 class AbstractTracer(ABC):
     """
     Uniform tracing interface.
-    Implementations: OpenTelemetry (OSS), Azure Monitor, AWS X-Ray, Cloud Trace.
+    Implementation: OpenTelemetry.
     """
 
     @abstractmethod
@@ -38,7 +38,7 @@ class AbstractTracer(ABC):
 class AbstractMetricsEmitter(ABC):
     """
     Uniform metrics emission interface.
-    Implementations: Prometheus (OSS), Azure Monitor Metrics, CloudWatch, Cloud Monitoring.
+    Implementation: Prometheus.
     """
 
     @abstractmethod

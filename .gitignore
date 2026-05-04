@@ -4,6 +4,10 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.development
+.env.staging
+.env.production
+.env.local
 data/raw_docs/
 data/feedback_queue/
 artifacts/
@@ -20,3 +24,4 @@ Thumbs.db
 .coverage
 htmlcov/
 .codex-tools/
+.codex/

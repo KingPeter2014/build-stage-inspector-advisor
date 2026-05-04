@@ -29,6 +29,16 @@ class TestTokenChunker:
         ids = [c.id for c in chunks]
         assert len(ids) == len(set(ids))
 
+    def test_chunk_ids_are_deterministic_and_hashed(self):
+        chunker = TokenChunker(chunk_size=32, chunk_overlap=8)
+        first = chunker.chunk("doc-1", SAMPLE_TEXT)
+        second = chunker.chunk("doc-1", SAMPLE_TEXT)
+
+        assert [c.id for c in first] == [c.id for c in second]
+        for chunk in first:
+            assert chunk.metadata["chunk_id"] == chunk.id
+            assert len(chunk.metadata["chunk_hash"]) == 64
+
     def test_overlap_creates_more_chunks(self):
         no_overlap = TokenChunker(chunk_size=50, chunk_overlap=0)
         with_overlap = TokenChunker(chunk_size=50, chunk_overlap=25)

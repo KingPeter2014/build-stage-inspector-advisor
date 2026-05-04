@@ -1,181 +1,255 @@
-# LLMOps Reference Architecture
+# Build Stage Inspector Advisor Architecture
 
 ## Overview
 
-This project implements a production-grade LLMOps reference architecture in Python,
-covering all six operational layers: **data ingestion → storage → model development →
-serving → observability → governance**.
+Build Stage Inspector Advisor is an open-source RAG and agent system for
+construction-stage inspection advice. The runtime is OSS-first: FastAPI,
+LiteLLM, Qdrant, Redis, MLflow, OpenTelemetry, Prometheus, Grafana, Jaeger,
+LangGraph, CrewAI, and optional S3-compatible object storage.
 
----
+Cloud platforms are not runtime targets. They can still be data sources through
+connectors, such as object storage, SharePoint, SQL systems, streams, web pages,
+or query-time web search.
 
-## Layer 1: Data Ingestion (`data_ingestion/`)
+## Target Flow
 
-| Component | File | Purpose |
-|---|---|---|
-| Base connector | `sources/base.py` | Abstract interface for all source connectors |
-| SQL connector | `sources/sql_connector.py` | Structured DB ingestion (SQLAlchemy) |
-| File connector | `sources/file_connector.py` | PDF, HTML, Markdown, text (local + S3) |
-| Stream connector | `sources/stream_connector.py` | Real-time events via Kafka |
-| Cleaner | `etl/cleaner.py` | Text normalisation, PII detection + redaction |
-| Chunker | `chunking/chunker.py` | Fixed-token and sentence chunking strategies |
-
-**Flow:** Raw sources → ETL/cleaning → PII check → chunking → vector store
-
----
-
-## Layer 2: Storage (`storage/`)
-
-| Component | File | Purpose |
-|---|---|---|
-| Vector store | `vector_store/qdrant_store.py` | Qdrant-backed semantic search |
-| Feature store | `feature_store/feast_store.py` | Structured features via Feast |
-| Data lake | `data_lake/s3_store.py` | Raw/processed/archived data on S3 |
-| Prompt registry | `prompt_registry/registry.py` | Versioned prompts (local + Langfuse) |
-
----
-
-## Layer 3: Model Development (`model_development/`)
-
-| Component | File | Purpose |
-|---|---|---|
-| Experiment tracker | `experiments/tracker.py` | MLflow / W&B unified interface |
-| LoRA fine-tuner | `fine_tuning/lora_trainer.py` | QLoRA fine-tuning with HuggingFace PEFT |
-| Eval harness | `evaluation/eval_harness.py` | DeepEval + Ragas evaluation |
-| Model registry | `model_registry/registry.py` | Champion/challenger lifecycle via MLflow |
-
-**CI gate:** New model must not regress accuracy by >2% vs. production champion.
-
----
-
-## Layer 4: Serving (`serving/`)
-
-| Component | File | Purpose |
-|---|---|---|
-| Gateway | `gateway/app.py` | FastAPI + LiteLLM proxy with cost tracking |
-| RAG pipeline | `rag/pipeline.py` | Retrieve → assemble context → generate |
-| Agent | `agents/langgraph_agent.py` | ReAct agent with tool use (LangGraph) |
-| Guardrails | `guardrails/guardrail_runner.py` | Input/output safety checks |
-
-**Gateway features:** Routing, rate limiting, auth, cost allocation, OpenTelemetry tracing.
-
-**RAG flexibility:** Retrieval can be configured as `vector`, `hybrid`,
-`graph_augmented`, or `hybrid_graph`. Security can be configured as `none`,
-`metadata_filtering`, `acl_filtering`, or `policy_enforced_acl`. For sensitive
-applications, ACL constraints must be applied before or during retrieval, not
-only after retrieval.
-
-Use `docs/use_case_templates/<provider>_use_case_template.md` when a specific
-use case is known. The completed template should drive provider adapter work,
-RAG schema choices, ACL enforcement, eval thresholds, CI/CD gates, and final
-production configuration.
-
----
-
-## Layer 5: Observability (`observability/`)
-
-| Component | File | Purpose |
-|---|---|---|
-| Tracer | `tracing/tracer.py` | OpenTelemetry setup + OTLP export |
-| Prometheus metrics | `metrics/prometheus_metrics.py` | Request counts, tokens, latency, cost, drift |
-| Drift detector | `output_eval/drift_detector.py` | Embedding-centroid drift detection |
-| Feedback collector | `feedback/collector.py` | User signals → retraining queue |
-
-**Key metrics:** TTFT, P95 latency, token usage, cost/request, faithfulness, drift score.
-
----
-
-## Layer 6: Governance (`governance/`)
-
-| Component | File | Purpose |
-|---|---|---|
-| Audit logger | `audit/audit_logger.py` | Tamper-evident audit log (SOC 2/HIPAA) |
-| RBAC | `access_control/rbac.py` | Role-based access (Viewer/Dev/ML/Admin) |
-| Cost manager | `cost/cost_manager.py` | Token budgets + spend alerts |
-| Prompt CI/CD | `cicd/prompt_cicd.yml` | GitHub Actions: lint → eval → promote |
-| Model CI/CD | `cicd/model_cicd.yml` | Build → eval gate → canary → promote |
-| RAG CI/CD | `cicd/rag_cicd.yml` | Retrieval eval → e2e eval → re-index |
-
----
-
-## CI/CD Decision Logic
-
-```
-Code / prompt / data change
-         │
-         ▼
-    Lint + validate
-         │
-         ▼
-   Regression evals          ← Golden dataset, DeepEval metrics
-         │
-         ▼
-    Safety evals             ← Adversarial inputs, guardrail pass rate ≥ 99%
-         │
-         ▼
-  Container build + scan     ← Trivy (CRITICAL/HIGH findings fail the build)
-         │
-         ▼
-  Integration tests          ← Mocked external dependencies
-         │
-         ▼
-  Latency SLO check          ← P95 < 3.0s
-         │
-         ▼
-  Canary deploy (10%)        ← Monitor error rate for 10 min
-         │
-         ▼
-  Full rollout               ← Requires passing canary window
+```text
+local/cloud/sharepoint/web sources
+  -> source connectors
+  -> data lineage
+  -> cleaner + PII handling
+  -> chunker + metadata enrichment
+  -> Qdrant vector index
+  -> RAG retriever + optional filters/rerankers
+  -> LiteLLM model route
+  -> FastAPI gateway / agents
+  -> audit, metrics, traces, evals, feedback
+  -> Streamlit UI for user interaction
 ```
 
----
+## Best-Practice OSS Service Architecture
+
+| Layer | Service | Local URL | Staging/production URL to create |
+|---|---|---|---|
+| Public gateway | FastAPI app | `http://localhost:4000` | `https://advisor.<domain>` |
+| LLM routing | LiteLLM | `http://localhost:4000` in Compose, or separate from app when deployed | `https://litellm.<domain>` or internal `http://litellm:4000` |
+| Vector database | Qdrant Cloud | `https://fe4f808f-27d6-4bdd-b403-482c42926700.europe-west6-0.gcp.cloud.qdrant.io:6333/dashboard` | `https://fe4f808f-27d6-4bdd-b403-482c42926700.europe-west6-0.gcp.cloud.qdrant.io:6333` |
+| Cache/rate limit | Redis | `redis://localhost:6379` in test stack | `redis://redis.<domain>:6379` or private service DNS |
+| Object store | S3-compatible store / MinIO / LocalStack | `http://localhost:4566` in test stack | `https://objects.<domain>` or private object-store endpoint |
+| Experiment tracking | MLflow | `http://localhost:5000` | `https://mlflow.<domain>` |
+| Prompt/trace review | Langfuse, optional | not currently composed | `https://langfuse.<domain>` or hosted Langfuse URL |
+| Metrics | Prometheus | `http://localhost:9090` | `https://prometheus.<domain>` or private service |
+| Dashboards | Grafana | `http://localhost:3000` | `https://grafana.<domain>` |
+| Tracing | Jaeger UI | `http://localhost:16686` | `https://jaeger.<domain>` |
+| OTLP collector | Jaeger/OTel endpoint | `http://localhost:4317` and `http://localhost:4318` | `https://otel.<domain>:4317` or private collector |
+| Streams | Kafka | `localhost:9092` | `kafka.<domain>:9092` or private broker |
+
+For production, expose only the public advisor gateway and approved dashboards.
+Keep Qdrant, Redis, object storage, Kafka, MLflow backend stores, and OTLP
+collectors private unless there is a deliberate admin access path.
+
+## Credentials And Secrets To Obtain
+
+| Area | Required secret or credential | Notes |
+|---|---|---|
+| LLM providers | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, optional local model route key | Use LiteLLM routes and model fallbacks; keep provider keys out of docs and source |
+| LiteLLM | `LITELLM_MASTER_KEY` | Required for gateway access control when LiteLLM is exposed |
+| Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | Use the Qdrant Cloud URL above. Store the API key only in `.env.development`, deployment secrets, or a secret manager |
+| Redis | `REDIS_URL` with password if secured | Used for semantic cache and rate-limit state |
+| Object storage | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `AWS_ENDPOINT_URL`, `S3_BUCKET` | Treat as S3-compatible storage credentials, not a cloud deployment target |
+| MLflow | `MLFLOW_TRACKING_URI`, backend DB credentials if externalized | Use a persistent backend store and artifact store outside local demos |
+| W&B, optional | `WANDB_API_KEY`, `WANDB_PROJECT` | Optional experiment tracking supplement |
+| Langfuse, optional | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | Prompt/trace review and callbacks |
+| SharePoint / Microsoft 365 source | Tenant ID, client ID, client secret or certificate, site/library IDs | Needed only when SharePoint ingestion is implemented |
+| Web search source | Chosen web-search API key and allowed domains policy | Needed only for query-time or scheduled web ingestion |
+| SQL sources | DSN, read-only username/password, TLS config | Use read-only credentials and source-specific schemas |
+| Gateway auth | JWT/OIDC issuer, audience, JWKS URL, admin users/groups | Replace header-based identity before production |
+| Dashboard admin | Grafana admin password or SSO config | Rotate defaults immediately outside local development |
+
+Store production values in a secret manager or deployment secret store. The
+`.env.*.example` files document names only and must not contain real values.
+
+## Data Ingestion
+
+| Component | File | Purpose |
+|---|---|---|
+| Base connector | `data_ingestion/sources/base.py` | Common `RawDocument` contract |
+| File connector | `data_ingestion/sources/file_connector.py` | PDF, HTML, Markdown, and text from local folders and S3-compatible storage |
+| SQL connector | `data_ingestion/sources/sql_connector.py` | Structured database ingestion |
+| Stream connector | `data_ingestion/sources/stream_connector.py` | Event ingestion through Kafka |
+| Cleaner | `data_ingestion/etl/cleaner.py` | Text normalization and PII handling |
+| Chunker | `data_ingestion/chunking/chunker.py` | Fixed-token and sentence chunking |
+| Metadata enrichment | `data_ingestion/enrichment/documents.py` | Canonical document metadata for NCC, contracts, policies, legal material, web, and SharePoint sources |
+
+Primary ingestion starts from `data/raw_docs`. Future source connectors should
+preserve the same downstream contract and add metadata needed for citations,
+filtering, trust scoring, and ACL checks.
+
+The v1 domain contract is documented in `docs/domain_contract.md`. The initial
+advisor scope is Australian construction-stage inspection advice, with NCC and
+other regulation material as the first authoritative corpus.
+
+Recommended document metadata:
+
+```text
+document_type, source_type, source_uri, source_title, source_version,
+retrieved_at, document_family, jurisdiction, effective_date, section, clause,
+volume, building_class, inspection_stage, project_id, contract_id, tenant_id,
+acl_user_ids, acl_group_ids, trust_level, tags
+```
+
+Use `document_type` to keep heterogeneous corpora filterable. Initial values are
+`regulation`, `contract`, `policy`, `legal`, `standard`, `guidance`, `report`,
+`web`, and `other`.
+
+Recommended `inspection_stage` values are `site_prep`, `slab`, `frame`,
+`lockup`, `waterproofing`, `fixing`, `practical_completion`, `handover`, and
+`other`.
+
+The public RAG API keeps all domain metadata constraints in `filter_by`.
+Supported v1 filter keys are `document_type`, `inspection_stage`,
+`jurisdiction`, `building_class`, `tenant_id`, `project_id`, `contract_id`,
+`document_family`, `source_version`, `trust_level`, and `tags`. ACL constraints
+belong in `acl_filter` using `acl_user_ids`, `acl_group_ids`, `tenant_id`, or
+`document_id`.
+
+## Storage And Retrieval
+
+Qdrant is the primary vector store. Use one collection per environment or tenant
+boundary unless there is a clear reason to share collections.
+
+Configured Qdrant Cloud endpoint:
+
+```text
+QDRANT_URL=https://fe4f808f-27d6-4bdd-b403-482c42926700.europe-west6-0.gcp.cloud.qdrant.io:6333
+```
+
+Keep `QDRANT_API_KEY` out of tracked files. Put it in `.env.development` for
+local work and in deployment secrets for staging/production.
+
+Recommended collection naming:
+
+```text
+buildstage_documents_development
+buildstage_documents_staging
+buildstage_documents_production
+```
+
+Override with `QDRANT_COLLECTION_NAME` when a deployment needs a tenant-specific
+or migration-specific collection.
+
+RAG settings:
+
+| Variable | Recommended starting value | Production guidance |
+|---|---|---|
+| `RAG_RETRIEVAL_MODE` | `vector` | Move to `hybrid` when keyword precision matters |
+| `RAG_SECURITY_MODE` | `metadata_filtering` | Use `acl_filtering` or `policy_enforced_acl` for private project/contract docs |
+| `GRAPH_ENABLED` | `false` | Enable only after a graph adapter exists |
+| `RERANKER_ENABLED` | `false` | Enable after adding deterministic reranker evals |
+
+For private contracts and project files, enforce ACLs before or during
+retrieval. Do not rely on post-retrieval filtering for sensitive documents.
+
+## Serving
+
+The public application service is `serving.gateway.app:app` on port `4000`.
+Best-practice production deployment:
+
+- Run at least two replicas.
+- Put TLS termination and auth at the edge.
+- Keep LiteLLM, Qdrant, Redis, object storage, and tracing endpoints private.
+- Use health checks on `/health`.
+- Export metrics on the configured metrics port before enabling Prometheus scraping.
+- Set request, token, and cost budgets per team.
+
+Use LiteLLM for model routing and fallback. The default model routes live in
+`config/litellm_config.yaml`.
+
+Key API paths:
+
+```text
+GET  /health
+POST /v1/chat/completions
+POST /v1/rag/query
+POST /v1/agents/run
+```
+
+The agent endpoint calls the open-source agent runner, whose
+`search_knowledge_base` tool invokes `POST /v1/rag/query` over HTTP. The RAG
+endpoint owns the Qdrant-backed pipeline through `serving/rag/service.py`, so
+agent orchestration and retrieval can be deployed as separate REST-facing
+microservices.
+
+## Observability
+
+Use OpenTelemetry traces, Prometheus metrics, Grafana dashboards, and Jaeger
+for trace inspection.
+
+Minimum production signals:
+
+- Request count and error rate
+- P50/P95/P99 latency
+- Retrieval latency and retrieved chunk count
+- Token usage and estimated cost
+- Cache hit rate
+- Guardrail blocks and output redactions
+- RAG faithfulness and drift reports
+- Unauthorized retrieval attempts
+
+## Governance
+
+Keep these gates before production:
+
+- Real gateway auth through JWT/OIDC, not trusted headers
+- Role and team policy checks in `governance/access_control`
+- Tamper-evident audit logs
+- Cost budgets by team/project
+- Safety evals and regression evals
+- ACL leakage tests for private corpora
+- Human review before prompt/model changes promote
+
+## Advisor Answer Contract
+
+RAG answers must use only retrieved context and cite material sources with
+`source_title` plus `clause`, `section`, or `volume` when available. The advisor
+should distinguish regulation, standard, contract, project, and web evidence
+when metadata is present, call out source conflicts, and say "I don't know based
+on the provided sources" when evidence is missing.
 
 ## Local Development
 
+Start the full local stack:
+
 ```bash
-# Start all local services
 docker compose up -d
-
-# Run unit tests
-pytest tests/unit/ -v
-
-# Seed eval dataset and run regression suite
-python scripts/run_evals.py --suite regression --seed
-
-# Run safety evals
-python scripts/run_evals.py --suite safety
-
-# Ingest sample documents
-mkdir -p data/raw_docs
-echo "LLMOps is the practice of operating LLMs." > data/raw_docs/sample.txt
-python scripts/run_ingestion.py --source-dir data/raw_docs
-
-# Start the gateway
-python serving/gateway/app.py
-
-# Access dashboards
-# MLflow:    http://localhost:5000
-# Grafana:   http://localhost:3000  (admin/admin)
-# Jaeger:    http://localhost:16686
-# Qdrant:    http://localhost:6333/dashboard
+uvicorn serving.gateway.app:app --port 4000
 ```
 
----
+Run the default test suite:
 
-## Adding a New Data Source
+```bash
+python -m pytest -q
+```
 
-1. Create `data_ingestion/sources/my_source_connector.py`
-2. Subclass `BaseSourceConnector`
-3. Implement `validate_connection()` and `fetch()`
-4. Add to `scripts/run_ingestion.py`
+Start the lightweight test stack when testing Redis, Qdrant, LocalStack, or
+WireMock integrations:
 
-## Adding a New Prompt
+```bash
+docker compose -f docker-compose.test.yml up -d
+```
 
-1. Add the prompt to `storage/prompt_registry/registry.py` default seeds
-2. Add required variables to `scripts/validate_prompts.py`
-3. Push: `python scripts/push_prompts.py --env production`
+## Adding A New Data Source
 
-## Adding a New Eval Metric
+1. Create `data_ingestion/sources/my_source_connector.py`.
+2. Subclass `BaseSourceConnector`.
+3. Implement `validate_connection()` and `fetch()`.
+4. Register the source in `scripts/run_ingestion.py` or a future source registry.
+5. Add source metadata for citations, filters, trust level, and ACL enforcement.
+6. Add a fixture-backed ingestion test and a retrieval leakage test when the source can contain private records.
 
-1. Add the metric to `model_development/evaluation/eval_harness.py`
-2. Add threshold to `scripts/run_evals.py`
-3. Update the CI gate in `governance/cicd/prompt_cicd.yml`
+## Adding A New Eval Metric
+
+1. Add the metric to `model_development/evaluation/eval_harness.py`.
+2. Add thresholds to `scripts/run_evals.py`.
+3. Update the relevant CI/CD gate under `governance/cicd/`.
+4. Require a project-specific golden dataset before treating the gate as production-ready.

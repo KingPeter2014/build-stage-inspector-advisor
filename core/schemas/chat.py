@@ -36,4 +36,4 @@ class ChatResponse(BaseModel):
     content: str
     usage: UsageInfo
     cached: bool = False
-    provider: str = ""  # "open_source" | "azure" | "aws" | "gcp"
+    provider: str = "open_source"

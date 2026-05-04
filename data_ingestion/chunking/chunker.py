@@ -4,12 +4,12 @@ Pluggable chunking strategies for preparing documents for embedding.
 """
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterator
 
 import tiktoken
+
+from data_ingestion.identity import sha256_text, stable_chunk_id
 
 
 @dataclass
@@ -70,12 +70,20 @@ class TokenChunker:
             end = min(start + self.chunk_size, len(tokens))
             chunk_tokens = tokens[start:end]
             content = self.enc.decode(chunk_tokens)
+            chunk_hash = sha256_text(content)
+            chunk_id = stable_chunk_id(document_id, idx, chunk_hash)
             chunks.append(Chunk(
-                id=str(uuid.uuid4()),
+                id=chunk_id,
                 document_id=document_id,
                 content=content,
                 chunk_index=idx,
-                metadata={**(metadata or {}), "token_start": start, "token_end": end},
+                metadata={
+                    **(metadata or {}),
+                    "chunk_id": chunk_id,
+                    "chunk_hash": chunk_hash,
+                    "token_start": start,
+                    "token_end": end,
+                },
             ))
             start += self.chunk_size - self.chunk_overlap
             idx += 1
@@ -101,12 +109,20 @@ class SentenceChunker:
         while start < len(sentences):
             end = min(start + self.max_sentences, len(sentences))
             content = " ".join(sentences[start:end])
+            chunk_hash = sha256_text(content)
+            chunk_id = stable_chunk_id(document_id, idx, chunk_hash)
             chunks.append(Chunk(
-                id=str(uuid.uuid4()),
+                id=chunk_id,
                 document_id=document_id,
                 content=content,
                 chunk_index=idx,
-                metadata={**(metadata or {}), "sentence_start": start, "sentence_end": end},
+                metadata={
+                    **(metadata or {}),
+                    "chunk_id": chunk_id,
+                    "chunk_hash": chunk_hash,
+                    "sentence_start": start,
+                    "sentence_end": end,
+                },
             ))
             start += self.max_sentences - self.overlap_sentences
             idx += 1

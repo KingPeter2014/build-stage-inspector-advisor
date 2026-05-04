@@ -7,7 +7,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 
 class ModelStage(str, Enum):
@@ -34,7 +33,7 @@ class ModelCard:
 class AbstractModelRegistry(ABC):
     """
     Uniform interface for model registries.
-    Implementations: MLflow Registry (OSS), Azure ML Registry, SageMaker Registry, Vertex AI Registry.
+    Implementation: MLflow Registry.
     """
 
     @abstractmethod

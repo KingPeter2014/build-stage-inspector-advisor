@@ -1,0 +1,86 @@
+[
+  {
+    "url": "https://www.consumer.vic.gov.au/housing/building-and-renovating/plan-and-manage-your-building-project/deposits-and-payments",
+    "metadata": {
+      "source_title": "Consumer Affairs Victoria - Deposits and payments for building work",
+      "document_family": "Consumer Affairs Victoria",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["contract-stage", "progress-payment", "deposit", "base", "frame", "lockup", "fixing"]
+    }
+  },
+  {
+    "url": "https://www.consumer.vic.gov.au/housing/building-and-renovating/plan-and-manage-your-building-project/building-progress",
+    "metadata": {
+      "source_title": "Consumer Affairs Victoria - Building progress",
+      "document_family": "Consumer Affairs Victoria",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["building-progress", "inspection-outcome", "stage-payment", "final-payment"]
+    }
+  },
+  {
+    "url": "https://www.consumer.vic.gov.au/housing/building-and-renovating/checklists/paying-for-building-work",
+    "metadata": {
+      "source_title": "Consumer Affairs Victoria - Paying for building work checklist",
+      "document_family": "Consumer Affairs Victoria",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["standard-payment-schedule", "progress-payment", "final-payment", "build-to-lockup", "build-to-fixing", "build-all-stages"]
+    }
+  },
+  {
+    "url": "https://www.consumer.vic.gov.au/licensing-and-registration/builders-and-tradespeople/running-your-business/domestic-building-contracts/laws-about-home-building-contracts",
+    "metadata": {
+      "source_title": "Consumer Affairs Victoria - Laws about home building contracts",
+      "document_family": "Consumer Affairs Victoria",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["major-domestic-building-contract", "domestic-building-contracts-act", "cost-plus", "contract-law"]
+    }
+  },
+  {
+    "url": "https://www.consumer.vic.gov.au/licensing-and-registration/builders-and-tradespeople/running-your-business/domestic-building-contracts/preparing-a-major-domestic-building-contract",
+    "metadata": {
+      "source_title": "Consumer Affairs Victoria - Preparing a major domestic building contract",
+      "document_family": "Consumer Affairs Victoria",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["major-domestic-building-contract", "cost-plus", "contract-price", "progress-payment", "variation"]
+    }
+  },
+  {
+    "url": "https://www.vba.vic.gov.au/__data/assets/pdf_file/0020/136541/Building-MI-01-Mandatory-notification-stages.pdf",
+    "metadata": {
+      "source_title": "VBA Practice Note MI-01 - Mandatory notification stages and inspection of building work",
+      "document_family": "Victorian Building Authority",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["mandatory-inspection", "mandatory-notification-stage", "rbs", "building-surveyor", "base", "frame", "final"]
+    }
+  },
+  {
+    "url": "https://www.energy.vic.gov.au/for-households/7-star-energy-efficiency-building-standards",
+    "metadata": {
+      "source_title": "Victorian Government - 7-star energy efficiency building standards",
+      "document_family": "Victorian Government",
+      "document_type": "guidance",
+      "jurisdiction": "VIC",
+      "building_class": "1",
+      "trust_level": "authoritative",
+      "tags": ["7-star", "nathers", "whole-of-home", "energy-efficiency", "1-may-2024"]
+    }
+  }
+]

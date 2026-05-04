@@ -3,9 +3,9 @@ config/settings.py
 Centralised settings loaded from environment variables via pydantic-settings.
 
 Load order (later files override earlier ones):
-  1. .env                   — base defaults
-  2. .env.<APP_ENV>         — environment-specific overrides (dev / staging / prod)
-  3. actual environment variables — highest priority (CI/CD injected values)
+  1. .env                   - base defaults
+  2. .env.<APP_ENV>         - environment-specific overrides (dev / staging / prod)
+  3. actual environment variables - highest priority (CI/CD injected values)
 """
 import os
 from functools import lru_cache
@@ -34,10 +34,11 @@ class Settings(BaseSettings):
     # Vector store
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
+    qdrant_collection_name: str = ""
     pgvector_dsn: str = ""
 
     # Object store
-    s3_bucket: str = "llmops-data-lake"
+    s3_bucket: str = "buildstage-data-lake"
     aws_default_region: str = "us-east-1"
 
     # Prompt registry / observability
@@ -47,11 +48,11 @@ class Settings(BaseSettings):
 
     # Experiment tracking
     mlflow_tracking_uri: str = "http://localhost:5000"
-    wandb_project: str = "llmops-experiments"
+    wandb_project: str = "build-stage-inspector"
 
     # OpenTelemetry
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
-    otel_service_name: str = "llmops-service"
+    otel_service_name: str = "build-stage-inspector"
 
     # LiteLLM gateway
     litellm_master_key: str = ""
@@ -59,9 +60,10 @@ class Settings(BaseSettings):
 
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
-    kafka_topic_ingestion: str = "llmops.ingestion"
+    kafka_topic_ingestion: str = "buildstage.ingestion"
 
     # RAG behavior
+    rag_api_url: str = "http://localhost:4000/v1/rag/query"
     rag_retrieval_mode: str = "vector"
     rag_security_mode: str = "none"
     graph_enabled: bool = False

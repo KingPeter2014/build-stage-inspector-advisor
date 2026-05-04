@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 class FrameworkMode(str, Enum):
@@ -34,6 +35,24 @@ class StubDecision:
     reason: str
 
 
+def get_config_value(name: str, default: str = "") -> str:
+    if name in os.environ:
+        return os.environ[name]
+
+    app_env = os.getenv("APP_ENV", "development")
+    values: dict[str, str] = {}
+    for path in (Path(".env"), Path(f".env.{app_env}")):
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    return values.get(name, default)
+
+
 def get_framework_mode() -> FrameworkMode:
     """
     Resolve the current framework maturity mode.
@@ -42,8 +61,8 @@ def get_framework_mode() -> FrameworkMode:
     a descriptive alias for CI jobs and local scripts.
     """
     raw = (
-        os.getenv("APP_COMPLEXITY")
-        or os.getenv("LLMOPS_FRAMEWORK_MODE")
+        get_config_value("APP_COMPLEXITY")
+        or get_config_value("LLMOPS_FRAMEWORK_MODE")
         or FrameworkMode.REFERENCE.value
     )
     try:

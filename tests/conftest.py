@@ -7,26 +7,23 @@ test classes. The skip hooks only fire for tests that carry the new markers.
 
 Environment tiers
 -----------------
-  development  Local dev machine. No cloud credentials expected. Services via
+  development  Local dev machine. No live cloud credentials expected. Services via
                docker-compose.test.yml. Set APP_ENV=development (default).
-  staging      Shared cloud environment. Cloud credentials available via GitHub
-               Environment secrets. Set APP_ENV=staging.
-  production   Live cloud. Never auto-deployed; requires explicit promotion
-               workflow. Set APP_ENV=production.
+  staging      Shared deployed environment. Set APP_ENV=staging.
+  production   Live deployed environment. Set APP_ENV=production.
 
 Controlling test execution
 --------------------------
   pytest                         # unit tests only (default addopts filter)
   pytest -m integration          # integration tests (needs docker-compose.test.yml)
   pytest -m smoke                # smoke tests (needs GATEWAY_URL)
-  pytest -m requires_cloud       # cloud tests (needs LLMOPS_RUN_CLOUD_TESTS=1)
+  pytest -m requires_cloud       # live external service tests (needs LLMOPS_RUN_CLOUD_TESTS=1)
   pytest -m "unit or integration" # combined
 """
 from __future__ import annotations
 
 import os
 import socket
-import time
 
 import pytest
 
@@ -120,7 +117,7 @@ def gateway_url() -> str:
 
 @pytest.fixture(scope="session")
 def localstack_url() -> str:
-    """LocalStack endpoint for AWS service mocks in integration tests."""
+    """LocalStack endpoint for S3-compatible object storage tests."""
     if not LOCALSTACK_URL:
         pytest.skip("LLMOPS_LOCALSTACK_URL not set — localstack tests skipped.")
     return LOCALSTACK_URL
